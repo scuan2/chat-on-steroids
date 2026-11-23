@@ -1,0 +1,52 @@
+--- a/crates/zakuro-gpu/src/raster.rs
++++ b/crates/zakuro-gpu/src/raster.rs
+@@ -3485,15 +3485,19 @@
+     let (buffer_width, buffer_height) = buffer_size(registers, viewport);
+     let (target_width, target_height) = (buffer_width, buffer_height);
+     #[cfg(feature = "vulkan")]
+-    let wide_margin = {
++    let (wide_margin, mario_lower_lcd) = {
+         let margin = resources.hardware.as_ref().map_or(0, |hardware| hardware.margin_for(buffer_height));
+         // Mario shares the 240x400 target between both LCDs. Its lower LCD
+         // is a 320-row viewport inside that target: keep its geometry at the
+         // native width and let the hardware backend center it by the margin.
+-        if margin != 0 && buffer_height == 400 && (viewport_height - 320.0).abs() < 0.5 {
+-            0
++        let lower = margin != 0
++            && buffer_width == 240
++            && buffer_height == 400
++            && (viewport_height - 320.0).abs() < 0.5;
++        if lower {
++            (0, true)
+         } else {
+-            margin
++            (margin, false)
+         }
+     };
+     #[cfg(not(feature = "vulkan"))]
+@@ -3597,6 +3601,25 @@
+     if let Some(hardware) = resources.hardware.as_mut() {
+         let target = &state.target;
+         let whole = target.buffer_width.is_multiple_of(8) && target.buffer_height.is_multiple_of(8);
++        // Mario's lower LCD is intentionally not widened, so its small UI draws
++        // can take the hardware-shader fast path below. Classify those few draws
++        // before that path returns; otherwise the course HUD and pause detector
++        // never see the lower-screen UI on device. Raw arrays are decoded by the
++        // caller once so the classifier gets the same shaded vertices as the
++        // normal path, while larger non-UI draws keep the zero-copy fast path.
++        if mario_lower_lcd && vertices.len() <= 48 {
++            match vertices {
++                Vertices::Raw { .. } => return None,
++                Vertices::Unshaded { vertex_shader, geometry_shader, inputs, order } => {
++                    let classified = process_vertices(registers, vertex_shader, geometry_shader, inputs, order);
++                    let mario_ui = mario_course_ui_draw(&classified.0, &state.target, state.textures);
++                    resources.mario_hud_parts |= mario_ui.hud_part;
++                    resources.mario_pause_rows |= mario_ui.pause_row;
++                    resources.mario_pause_dialog |= mario_ui.pause_dialog;
++                }
++                Vertices::Shaded(_) | Vertices::Prepared(_) => {}
++            }
++        }
+         let unshaded = match vertices {
+             Vertices::Unshaded { vertex_shader, inputs, order, .. } => {
+                 Some((vertex_shader, hardware::Inputs::Decoded(inputs), order, None))
