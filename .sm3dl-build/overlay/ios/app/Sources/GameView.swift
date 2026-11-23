@@ -578,16 +578,13 @@ struct GameView: View {
                 // A custom GPU layout fills the whole game-view stage (the
                 // presenter draws the two screens at their user rectangles); the
                 // arrangements keep their fitted box.
-                let box: CGSize
-                if isMario3DLand {
-                    // The 5x presenter crop is 2133x1200: the nearest
-                    // integer-pixel raster to 16:9 at panel-native height.
-                    // Match that exact raster here so CoreAnimation never
-                    // introduces even a fractional horizontal stretch.
-                    box = ScreenGeometry.fittedSize(aspect: 2133.0 / 1200.0, in: available)
-                } else {
-                    box = layout == .custom ? available : contentSize(in: available, layout: layout)
-                }
+                // The 5x Mario presenter crop is 2133x1200: the nearest
+                // integer-pixel raster to 16:9 at panel-native height. Keep
+                // this as one ViewBuilder-safe initialization expression so
+                // CoreAnimation never introduces horizontal stretch.
+                let box: CGSize = isMario3DLand
+                    ? ScreenGeometry.fittedSize(aspect: 2133.0 / 1200.0, in: available)
+                    : (layout == .custom ? available : contentSize(in: available, layout: layout))
                 ZStack {
                     presentedSurface(view: metalView, size: box)
                 }
