@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-shell:
-    runs-on: macos-14
+    runs-on: macos-15-intel
     timeout-minutes: 60
     steps:
       - name: Check out build carrier
@@ -90,4 +90,5 @@ jobs:
             sm3dl/out/shell/manifest.json
           if-no-files-found: error
           retention-days: 1
+
 
