@@ -1,0 +1,772 @@
+/*
+ * ZakuroBridge.h — C ABI of libzakuro_ios.a for the 3ds2apple shell.
+ *
+ * Hand-written mirror of the `zakuro-ios` Rust crate
+ * (ios/zakuro-ios/src/lib.rs); keep both in sync when the FFI changes.
+ *
+ * Swift sees these declarations through SWIFT_OBJC_BRIDGING_HEADER
+ * (see ios/app/project.yml), so Swift code calls `zk_*` directly.
+ *
+ * Threading: a zk_system_t handle is not thread-safe. Every call that takes a
+ * handle must run on the same serial queue (ios/zakuro-ios/README.md).
+ * Null handles are tolerated and turn calls into no-ops.
+ *
+ * Presentation: zk_presenter_create() takes a UIView whose layer is a
+ * CAMetalLayer and makes Zakuro's Vulkan presenter draw into it (on iOS that is
+ * MoltenVK over Metal). zk_create_presented() then loads a ROM on the device
+ * the renderer shares with the presenter, and zk_present() shows each frame
+ * without the zk_read_screen() GPU→CPU copy. The presenter is a main-queue
+ * object (UIView); zk_present() belongs on the runtime serial queue. Without a
+ * loadable MoltenVK zk_presenter_create() returns NULL and the app keeps the
+ * zk_create + zk_read_screen + CGImage path.
+ *
+ * Software keyboard: a title can start the 3DS keyboard applet and wait for
+ * text (a player name, a message, a password). zk_keyboard_pending() reports
+ * the request after each frame, zk_keyboard_request_json() describes it as JSON
+ * (schema 1) and zk_answer_keyboard() answers it. All three are additive: an
+ * app that never calls them keeps the old behaviour (the title just keeps
+ * waiting), and the app polls them on the runtime serial queue.
+ *
+ * No CPU JIT: iOS forbids executable memory. This is the AOT + interpreter
+ * build, so nothing here creates executable pages.
+ */
+
+#ifndef ZAKURO_BRIDGE_H
+#define ZAKURO_BRIDGE_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ------------------------------------------------------------- typedefs -- */
+
+/**
+ * Opaque handle to a loaded 3DS system.
+ *
+ * Created by zk_create(); release with zk_destroy(). NULL is never valid.
+ */
+typedef void *zk_system_t;
+
+/**
+ * Screen selector used by zk_screen_width(), zk_screen_height() and
+ * zk_read_screen(). See ZK_SCREEN_TOP / ZK_SCREEN_BOTTOM.
+ */
+typedef uint32_t zk_screen_t;
+
+/** 3DS HID button bit mask passed to zk_set_input(). See ZK_BUTTON_*. */
+typedef uint32_t zk_buttons_t;
+
+/** Result of zk_run_frame(). See ZK_FRAME_*. */
+typedef int32_t zk_frame_result_t;
+
+/**
+ * Opaque handle to a presenter drawing into the app's CAMetalLayer.
+ *
+ * Created by zk_presenter_create(); release with zk_presenter_destroy(). NULL is
+ * never valid.
+ */
+typedef void *zk_presenter_t;
+
+/* ------------------------------------------------------------ constants -- */
+
+/** Screen selectors. */
+enum {
+    ZK_SCREEN_TOP = 0,    /**< Upper screen: 400 x 240. */
+    ZK_SCREEN_BOTTOM = 1  /**< Lower screen: 320 x 240. */
+};
+
+/** zk_run_frame() results. */
+enum {
+    ZK_FRAME_COMPLETED = 0,   /**< Frame advanced normally. */
+    ZK_FRAME_EXITED = 1,      /**< Application requested exit. */
+    ZK_FRAME_FAULTED = -1,    /**< CPU fault; details go to stderr. */
+    ZK_FRAME_BAD_HANDLE = -2  /**< NULL/invalid zk_system_t. */
+};
+
+/** 3DS HID button bits (PadState bit layout, see ios/zakuro-ios/README.md). */
+enum {
+    ZK_BUTTON_A = 1 << 0,
+    ZK_BUTTON_B = 1 << 1,
+    ZK_BUTTON_SELECT = 1 << 2,
+    ZK_BUTTON_START = 1 << 3,
+    ZK_BUTTON_RIGHT = 1 << 4,
+    ZK_BUTTON_LEFT = 1 << 5,
+    ZK_BUTTON_UP = 1 << 6,
+    ZK_BUTTON_DOWN = 1 << 7,
+    ZK_BUTTON_R = 1 << 8,
+    ZK_BUTTON_L = 1 << 9,
+    ZK_BUTTON_X = 1 << 10,
+    ZK_BUTTON_Y = 1 << 11,
+    ZK_BUTTON_ZL = 1 << 14,
+    ZK_BUTTON_ZR = 1 << 15
+};
+
+/* ------------------------------------------------------------ functions -- */
+
+/**
+ * Loads a decrypted .3ds/.cci file and returns an opaque handle.
+ *
+ * @param rom_path  Absolute path to the ROM (UTF-8).
+ * @param data_dir  Directory for saves/cache, or NULL for none.
+ * @return          System handle, or NULL on failure.
+ *
+ * May take seconds on a cold cache: call it off the main thread.
+ */
+zk_system_t zk_create(const char *rom_path, const char *data_dir);
+
+/**
+ * Returns the last zk_create() failure message for the current thread, or
+ * NULL when there is none.
+ *
+ * The pointer stays valid until the next zk_create()/zk_last_error() call on
+ * the same thread; copy the text before crossing threads or queues.
+ */
+const char *zk_last_error(void);
+
+/**
+ * Runs one frame.
+ *
+ * @return ZK_FRAME_COMPLETED, ZK_FRAME_EXITED, ZK_FRAME_FAULTED or
+ *         ZK_FRAME_BAD_HANDLE.
+ */
+zk_frame_result_t zk_run_frame(zk_system_t system);
+
+/** Width in pixels of screen `which` (0/top = 400, 1/bottom = 320). */
+uint32_t zk_screen_width(zk_screen_t which);
+
+/** Height in pixels of screen `which` (240 for both screens). */
+uint32_t zk_screen_height(zk_screen_t which);
+
+/**
+ * Copies RGBA8 pixels of screen `which` into `out`.
+ *
+ * @param out       Destination buffer (RGBA8, row-major, top-left origin).
+ * @param capacity  Buffer size in bytes.
+ * @return          Full byte length of the screen (may exceed capacity, in
+ *                  which case the copy was truncated).
+ */
+size_t zk_read_screen(zk_system_t system, zk_screen_t which, uint8_t *out,
+                      size_t capacity);
+
+/**
+ * Copies interleaved stereo i16 PCM into `out`.
+ *
+ * @param capacity  Buffer capacity in samples (not frames).
+ * @return          Frames written (at most capacity / 2).
+ */
+size_t zk_take_audio(zk_system_t system, int16_t *out, size_t capacity);
+
+/**
+ * Pushes the current input state.
+ *
+ * @param buttons   ZK_BUTTON_* bit mask.
+ * @param circle_x  Circle Pad X, -1.0 ... 1.0.
+ * @param circle_y  Circle Pad Y, -1.0 ... 1.0.
+ * @param touch     0 = not touching, non-zero = touching.
+ * @param touch_x   Touch X in bottom-screen pixels.
+ * @param touch_y   Touch Y in bottom-screen pixels.
+ */
+void zk_set_input(zk_system_t system, zk_buttons_t buttons, float circle_x,
+                  float circle_y, int32_t touch, uint16_t touch_x,
+                  uint16_t touch_y);
+
+/**
+ * Sets the New 3DS C-stick vector that the next zk_set_input() call pushes.
+ *
+ * zk_set_input() predates the C-stick and has no parameter for it, so this call
+ * stores the vector in a thread-local slot that the next zk_set_input() on the
+ * same thread (the runtime's serial queue) merges into the input state. The
+ * value starts at (0, 0); pass (0, 0) to release the stick. Out-of-range values
+ * are clamped to -1.0 ... 1.0 (NaN becomes 0); a NULL system handle is a no-op.
+ * It is additive: a caller that never calls it keeps the old behaviour of a
+ * centred C-stick.
+ *
+ * @param c_stick_x  C-stick X, -1.0 ... 1.0 (+x is right).
+ * @param c_stick_y  C-stick Y, -1.0 ... 1.0 (+y is up, like the Circle Pad).
+ */
+void zk_set_cstick(zk_system_t system, float c_stick_x, float c_stick_y);
+
+/* ---------------------------------------------- software keyboard (applet) -- */
+
+/**
+ * The largest JSON document zk_keyboard_request_json() returns, in bytes and
+ * not counting the terminating NUL. Mirrors KEYBOARD_JSON_MAX_BYTES in
+ * ios/zakuro-ios/src/lib.rs; keep both in step. The document is deliberately
+ * bounded because a title's initial text is not: the hint and button labels
+ * come from the applet's fixed-size configuration, the text does not.
+ */
+#define ZK_KEYBOARD_JSON_MAX_BYTES (16u * 1024u)
+
+/**
+ * 1 while a title waits on the 3DS software keyboard (the library applet a game
+ * starts to have a name or other text typed in), 0 when none is open or the
+ * handle is NULL.
+ *
+ * Call it after every zk_run_frame() on the runtime serial queue: it is only a
+ * flag check, cheap enough for every frame. When it reports 1, read the request
+ * with zk_keyboard_request_json() and stop running frames until
+ * zk_answer_keyboard() has answered it: the title is waiting on the applet, so
+ * frames would only burn CPU (the desktop frontend stops emulating while it
+ * types for the same reason). Answering resumes the loop from the frame the
+ * title was waiting in.
+ */
+int32_t zk_keyboard_pending(zk_system_t system);
+
+/**
+ * The pending software-keyboard request as one JSON document, or NULL when no
+ * request is open (or the handle is NULL).
+ *
+ * Schema 1:
+ *
+ * {"schema":1,"hint":"Your name","text":"Link","maxLength":8,
+ *  "buttons":["Cancel","OK"],"valid":"notEmptyNotBlank"}
+ *
+ *  hint      the applet's prompt line; may be empty.
+ *  text      the initial text the applet read from the title's shared block;
+ *            possibly cut to keep the document within
+ *            ZK_KEYBOARD_JSON_MAX_BYTES (never mid-character).
+ *  maxLength the title's limit in UTF-16 units.
+ *  buttons   the labels left to right; the last one confirms, like the applet.
+ *  valid     the confirming button's rule: "anything", "notEmpty",
+ *            "notEmptyNotBlank", "notBlank" or "fixedLength" (exactly
+ *            maxLength units). The other buttons never apply it; a request with
+ *            one button can then only be answered with valid text.
+ *
+ * The pointer is owned by the library and stays valid until the next
+ * zk_keyboard_request_json() call on the same thread; copy it
+ * (String(cString:) in Swift) and never free it. Call it on the runtime serial
+ * queue, like every call that takes a handle.
+ */
+const char *zk_keyboard_request_json(zk_system_t system);
+
+/** zk_answer_keyboard() results. */
+enum {
+    ZK_KEYBOARD_ANSWERED = 0,    /**< Answered; resume the frame loop. */
+    ZK_KEYBOARD_BAD_HANDLE = -1, /**< NULL/invalid zk_system_t. */
+    ZK_KEYBOARD_BAD_TEXT = -2,   /**< NULL or non-UTF-8 text. */
+    ZK_KEYBOARD_NO_REQUEST = -3  /**< No request is open (already answered, or
+                                      the title closed it). */
+};
+
+/**
+ * Answers the pending software-keyboard request with @p text (UTF-8) and the
+ * @p button pressed, zero being the leftmost and the last one confirming.
+ *
+ * The text is truncated to the request's maxLength and to the shared block the
+ * title reads it from, like the console does; a button index past the last one
+ * counts as the last one. Returns ::ZK_KEYBOARD_ANSWERED once the title can be
+ * resumed; any other result leaves the request as it was (or closes nothing).
+ *
+ * Call it on the runtime serial queue, like every other handle call.
+ */
+int32_t zk_answer_keyboard(zk_system_t system, const char *text, uint32_t button);
+
+/**
+ * Releases a handle returned by zk_create(). Safe to call with NULL.
+ *
+ * Also releases a saved state the handle measured and did not copy yet (see
+ * zk_save_state_discard()), so an abandoned save does not outlive the runtime.
+ */
+void zk_destroy(zk_system_t system);
+
+/* ------------------------------------------------- saved states (instant) -- */
+
+/**
+ * The largest one saved state may be, in bytes, in either direction. Mirrors
+ * ZK_SAVE_STATE_MAX_BYTES in ios/zakuro-ios/src/savestate.rs; keep both in
+ * step. The raw console memories are at most a New3DS's 256 MiB FCRAM plus
+ * 6 MiB VRAM and 1 MiB DSP RAM/AXI WRAM, so a bigger length is a bug or a
+ * damaged file, and the library refuses it instead of asking for the memory.
+ */
+#define ZK_SAVE_STATE_MAX_BYTES (512u * 1024u * 1024u)
+
+/** zk_load_state() results. */
+enum {
+    ZK_LOAD_STATE_LOADED = 0,        /**< The state was applied. */
+    ZK_LOAD_STATE_BAD_HANDLE = -1,   /**< NULL system handle. */
+    ZK_LOAD_STATE_BAD_ARGUMENT = -2, /**< NULL data with a length, or a length
+                                          past ZK_SAVE_STATE_MAX_BYTES. */
+    ZK_LOAD_STATE_REFUSED = -3       /**< Not a state this console can take
+                                          (another game, another Zakuro
+                                          version, another console model, or
+                                          damaged/truncated bytes). Nothing was
+                                          applied. */
+};
+
+/**
+ * Bytes a saved state of `system` takes, 0 on failure.
+ *
+ * Serializes the whole console once (tens of milliseconds up to about a
+ * second) and keeps the blob inside the library, so the following
+ * zk_save_state_copy() copies that exact snapshot instead of serializing
+ * again. Call it between frames on the runtime's serial queue with the frame
+ * loop paused: the blob is the console as it was at this call.
+ *
+ * A success clears the calling thread's last error; a failure returns 0 and
+ * writes the reason to zk_last_error() on that thread.
+ */
+size_t zk_save_state_size(zk_system_t system);
+
+/**
+ * Copies the measured saved state into `out`; returns its full length, 0 on
+ * failure (reason in zk_last_error()).
+ *
+ * `out == NULL` (or `capacity == 0`) only reports the length and keeps the
+ * blob, like zk_save_state_size(). Otherwise it copies
+ * `min(capacity, length)` bytes: a short buffer is logged and the blob stays
+ * for a retry with the full length, while a complete copy releases it. When no
+ * blob is kept for the handle (no zk_save_state_size() call, or the kept one
+ * belongs to another handle) the console is serialized here first, so a copy
+ * into an already large enough buffer works on its own.
+ *
+ * `out` must point to `capacity` writable bytes (the zk_read_screen() contract);
+ * a real state is never 0 bytes long.
+ */
+size_t zk_save_state_copy(zk_system_t system, uint8_t *out, size_t capacity);
+
+/**
+ * Releases the state zk_save_state_size()/zk_save_state_copy() kept for
+ * `system`, without copying it, when a measured save is abandoned.
+ *
+ * The kept blob is the size of the state (tens of MiB). A complete copy, a
+ * load, a destroy and the next measurement release it too. Safe with NULL.
+ */
+void zk_save_state_discard(zk_system_t system);
+
+/**
+ * Loads a saved state back into `system`: 0 (ZK_LOAD_STATE_LOADED) on success,
+ * a negative ZK_LOAD_STATE_* code otherwise, with the reason in
+ * zk_last_error() on the calling thread. A success clears that error.
+ *
+ * The container is checked before Zakuro reads it (magic, truncation, section
+ * lengths and the four memory sizes), so a truncated or damaged file is
+ * refused without a many-gigabyte allocation request and without touching the
+ * running console. Zakuro then checks the format version and title ID and
+ * applies nothing unless the whole state was read and accepted.
+ *
+ * Call it between frames on the runtime's serial queue. After a successful
+ * load, drop audio buffered before the load (the DSP state went back too) and
+ * let the next frame redraw; the GPU's guest-side state is part of the state.
+ */
+int32_t zk_load_state(zk_system_t system, const uint8_t *data, size_t length);
+
+/* ------------------------------- presentation on the app's CAMetalLayer -- */
+
+/**
+ * Creates a presenter for the app's UIView: Zakuro's Vulkan presenter makes a
+ * surface, swapchain and present pipeline over the view's CAMetalLayer, and
+ * keeps a Vulkan device the renderer can share. On iOS the Vulkan
+ * implementation is MoltenVK over Metal.
+ *
+ * @param ui_view  Pointer to a UIView whose `layerClass` is CAMetalLayer; pass
+ *                 Unmanaged.passUnretained(view).toOpaque() in Swift. The view
+ *                 must outlive the presenter and stay on the main thread.
+ * @param width    Drawable width in pixels.
+ * @param height   Drawable height in pixels.
+ * @return         Presenter handle, or NULL when no surface/device can be made
+ *                 (usually: no MoltenVK in the app, or a zero size). The reason
+ *                 is in zk_last_error() on the calling thread.
+ *
+ * Call on the main queue before zk_create_presented(). If this returns NULL the
+ * app is expected to keep the readback path (zk_create + zk_read_screen).
+ */
+zk_presenter_t zk_presenter_create(void *ui_view, uint32_t width, uint32_t height);
+
+/**
+ * Resizes the swapchain to a new drawable size in pixels.
+ *
+ * Call on the main queue when the view is laid out again (rotation, split view).
+ * The swapchain is rebuilt on the next zk_present(), which returns 1 (out of
+ * date) once; following frames present normally. Returns 0, or -1 for a NULL
+ * presenter or a zero size.
+ */
+int32_t zk_presenter_resize(zk_presenter_t presenter, uint32_t width, uint32_t height);
+
+/**
+ * Releases a presenter and everything it made. Release the systems loaded with
+ * zk_create_presented() first. Safe to call with NULL.
+ */
+void zk_presenter_destroy(zk_presenter_t presenter);
+
+/**
+ * 1 when the presenter has a Vulkan device it can share with the renderer (the
+ * screens can go straight to the layer), 0 when it owns a plain device and
+ * pixels are uploaded, -1 for a NULL presenter.
+ */
+int32_t zk_presenter_shared_device(zk_presenter_t presenter);
+
+/**
+ * Loads a decrypted ROM with presentation on the app's CAMetalLayer.
+ *
+ * Same as zk_create(), but the 3D draws on the presenter's Vulkan device and
+ * zk_present() shows the screens without zk_read_screen(). The loader falls
+ * back to the software renderer (whose pixels the presenter uploads) when the
+ * GPU renderer cannot start; the app still never needs zk_read_screen().
+ *
+ * Returns NULL on failure; the reason is in zk_last_error() on the calling
+ * thread. The app should then fall back to zk_create() (the readback path).
+ * Call it on the runtime serial queue, after zk_presenter_create().
+ */
+zk_system_t zk_create_presented(const char *rom_path, const char *data_dir,
+                                zk_presenter_t presenter);
+
+/**
+ * Presents the frame zk_run_frame() just drew on the CAMetalLayer.
+ *
+ * Call once per completed frame, on the same serial queue as zk_run_frame(),
+ * while the presenter and the system are both alive.
+ *
+ * @return 0  presented (including a rebuilt swapchain),
+ *         1  the swapchain was out of date and rebuilt; continue presenting,
+ *        -1  a NULL/unusable handle,
+ *        -2  presenting failed (reason in zk_last_error() and the log).
+ */
+int32_t zk_present(zk_system_t system, zk_presenter_t presenter);
+
+/**
+ * How a loaded system puts its screens on the display:
+ * 0 = no presenter, the app reads them back (zk_read_screen);
+ * 1 = presenter shows the renderer's GPU images directly;
+ * 2 = presenter uploads CPU pixels (renderer in software, or no shared device).
+ *
+ * Pass the presenter given to zk_create_presented(), or NULL for a zk_create
+ * system. Returns 0 for a NULL system or NULL presenter.
+ */
+int32_t zk_present_mode(zk_system_t system, zk_presenter_t presenter);
+
+/**
+ * How the two screens are arranged on the presented layer. Pass these numbers to
+ * zk_presenter_set_layout() and zk_present_layout_size(); the same number also
+ * selects the lower screen in zk_present_touch_map().
+ */
+enum {
+    ZK_LAYOUT_STACKED = 0,      /**< Upper screen above the lower one (console). */
+    ZK_LAYOUT_SIDE_BY_SIDE = 1, /**< Upper screen left, lower screen right. */
+    ZK_LAYOUT_TOP_ONLY = 2,     /**< Upper screen only. */
+    ZK_LAYOUT_BOTTOM_ONLY = 3,  /**< Lower screen only. */
+    ZK_LAYOUT_LARGE_TOP = 4,    /**< Large upper screen, lower one small at its lower right. */
+    ZK_LAYOUT_LARGE_TOP_RIGHT = 5, /**< Large upper screen, lower one small at its upper right. */
+    ZK_LAYOUT_HYBRID = 6,       /**< Large upper screen left, the two small screens stacked on the right. */
+    ZK_LAYOUT_TOP_FULL_WIDTH = 7, /**< Upper screen across the top, lower one below at the same width. */
+    ZK_LAYOUT_CUSTOM = 8        /**< Two app-provided normalised rectangles; see zk_presenter_set_custom_viewports(). */
+};
+
+/**
+ * Which way the screens are turned inside the presented layer. North is the
+ * console's upright orientation; the other values rotate the picture clockwise,
+ * so a stacked console held sideways becomes two columns. A rotation is not a
+ * property of the device's interface orientation: iOS rotates the app's view
+ * with the device already.
+ */
+enum {
+    ZK_ORIENTATION_NORTH = 0,
+    ZK_ORIENTATION_EAST = 1,
+    ZK_ORIENTATION_SOUTH = 2,
+    ZK_ORIENTATION_WEST = 3
+};
+
+/**
+ * Sets how the screens are arranged on the layer, from the next zk_present() on.
+ *
+ * The app normally gives the CAMetalLayer the drawable size that
+ * zk_present_layout_size() reports for the same layout/orientation, so the
+ * screens fill the layer instead of being letterboxed. This is a presenter call
+ * like zk_present(): change it on the runtime serial queue while a system is
+ * presenting (the next frame uses it), or on the main queue before a load
+ * starts. Returns 0, or -1 for a NULL presenter or an unknown layout.
+ */
+int32_t zk_presenter_set_layout(zk_presenter_t presenter, uint32_t layout);
+
+/**
+ * Sets where the custom layout draws the two screens, from the next
+ * zk_present() on. Call it together with
+ * zk_presenter_set_layout(presenter, ZK_LAYOUT_CUSTOM).
+ *
+ * The rectangles are normalised drawable pixels, (left, top, width, height)
+ * from the layer's top left. The app has already aspect-fitted each screen's
+ * picture inside the user's rectangle (upper 400:240, lower 320:240); the
+ * presenter draws each screen into exactly its rectangle and leaves the rest
+ * black. The values persist for that presenter until replaced. The custom
+ * layout is for an upright picture only: a turned screen keeps the readback
+ * path and its rotated touch mapping.
+ *
+ * Call it like zk_presenter_set_layout(): on the runtime serial queue while a
+ * system is presenting, or on the main queue before a load starts.
+ * Returns 1, 0 for rectangles that are not real places inside the layer (the
+ * reason is in zk_last_error()), or -1 for a NULL presenter.
+ */
+int32_t zk_presenter_set_custom_viewports(zk_presenter_t presenter,
+                                          float top_x, float top_y,
+                                          float top_w, float top_h,
+                                          float bottom_x, float bottom_y,
+                                          float bottom_w, float bottom_h);
+
+/**
+ * Sets how the custom layout turns each screen's picture inside its rectangle,
+ * from the next zk_present() on. The values are the ZK_ORIENTATION_* quarter
+ * turns: north is the upright picture, the others rotate it clockwise inside
+ * the app's rectangle. North is the default. Returns 0, or -1 for a NULL
+ * presenter or an unknown rotation.
+ */
+int32_t zk_presenter_set_custom_rotation(zk_presenter_t presenter, uint32_t rotation);
+
+/**
+ * Swaps which screen's picture the presenter draws in each place, from the next
+ * zk_present() on, for every layout (presets and custom included). The places
+ * themselves do not move; with swap 0 the output is unchanged. The app keeps
+ * its UI.swapScreens setting and calls this on load and when its Swap screens
+ * button toggles. Returns 0, or -1 for a NULL presenter.
+ */
+int32_t zk_presenter_set_screen_swap(zk_presenter_t presenter, uint32_t swap);
+
+/**
+ * Sets which way the screens are turned on the layer, from the next
+ * zk_present() on (see ZK_ORIENTATION_*). Called the same way as
+ * zk_presenter_set_layout(). Returns 0, or -1 for a NULL presenter or an
+ * unknown orientation.
+ */
+int32_t zk_presenter_set_orientation(zk_presenter_t presenter, uint32_t orientation);
+
+/**
+ * Reports the drawable size, in pixels, that shows a layout without
+ * letterboxing: both 3DS screens at their own resolution, arranged and turned as
+ * asked. The app sets its CAMetalLayer (and the presenter, through
+ * zk_presenter_create / zk_presenter_resize) to this size.
+ *
+ * Returns 1 and writes both outputs, or 0 for an unknown layout/orientation or a
+ * NULL output. What it returns for the common combinations:
+ *
+ * | layout                         | north   | east/west |
+ * |--------------------------------|---------|-----------|
+ * | ZK_LAYOUT_STACKED              | 400x480 | 480x400   |
+ * | ZK_LAYOUT_SIDE_BY_SIDE         | 720x240 | 240x720   |
+ * | ZK_LAYOUT_TOP_ONLY             | 400x240 | 240x400   |
+ * | ZK_LAYOUT_BOTTOM_ONLY          | 320x240 | 240x320   |
+ */
+int32_t zk_present_layout_size(uint32_t layout, uint32_t orientation,
+                               uint32_t *out_width, uint32_t *out_height);
+
+/**
+ * Maps a touch on the presented layer to lower-screen pixels.
+ *
+ * @param width       Drawable width in pixels (as passed to zk_presenter_create /
+ *                    zk_presenter_resize).
+ * @param height      Drawable height in pixels.
+ * @param layout      ZK_LAYOUT_* the presenter is configured with.
+ * @param orientation ZK_ORIENTATION_* the presenter is configured with.
+ * @param x           Touch X normalised to 0.0 ... 1.0 from the view's left edge.
+ * @param y           Touch Y normalised to 0.0 ... 1.0 from the view's top edge.
+ * @param out_x       Receives the lower-screen X in pixels (0 ... 320).
+ * @param out_y       Receives the lower-screen Y in pixels (0 ... 240).
+ * @return            1 when the touch is on the lower screen (outputs written),
+ *                    0 when it is not (the touch releases) or an argument is
+ *                    NULL/unknown.
+ *
+ * The layout decides where the lower screen is: nowhere for the upper-only
+ * layout, and turned back into the screen's own upright pixels when the
+ * orientation is not north.
+ */
+int32_t zk_present_touch_map(uint32_t width, uint32_t height,
+                             uint32_t layout, uint32_t orientation, uint32_t swap,
+                             float x, float y,
+                             uint16_t *out_x, uint16_t *out_y);
+
+/**
+ * Maps a touch in the presented layer to lower-screen pixels when the presenter
+ * draws the custom layout.
+ *
+ * width and height are the layer's size in pixels; the rectangles use the same
+ * normalised drawable pixels as zk_presenter_set_custom_viewports() (and are
+ * checked the same way); x and y are normalised to 0.0 ... 1.0 from the layer's
+ * top left; rotation is the ZK_ORIENTATION_* value passed to
+ * zk_presenter_set_custom_rotation() (the picture is turned clockwise inside
+ * the rectangle, so the map undoes the turn: north (u,v), east (v,1-u),
+ * south (1-u,1-v), west (1-v,u)). Returns 1 and writes the lower-screen pixel
+ * coordinates (0...320, 0...240) when the point is inside the lower screen's
+ * rectangle, 0 when it is not, an argument is missing, the rotation is unknown
+ * or a rectangle is not a real place.
+ */
+int32_t zk_present_custom_touch_map(uint32_t width, uint32_t height,
+                                    float top_x, float top_y,
+                                    float top_w, float top_h,
+                                    float bottom_x, float bottom_y,
+                                    float bottom_w, float bottom_h,
+                                    float x, float y, uint32_t rotation, uint32_t swap,
+                                    uint16_t *out_x, uint16_t *out_y);
+
+/* --------------------------------------------------- hardware diagnostics -- */
+
+/**
+ * Sets the internal resolution the 3D renderer draws at: 1 is the 3DS's own
+ * 400x240 (the default) and 4 is 1600x960. Values in between are the same
+ * multiple of both screens.
+ *
+ * The loader builds the renderer while it loads a system, so a new scale takes
+ * effect on the next zk_create()/zk_create_presented() call. A system that is
+ * already loaded keeps the scale it was created with; there is no run-time
+ * renderer rebuild, so destroy it and load again to change the scale. The
+ * setting is process-wide and independent of zk_set_hardware_renderer(), but
+ * only the host-GPU renderer uses it: the software PICA200 always draws at 1x.
+ * The presenter scales the larger screens down to its layer.
+ *
+ * Call it on the runtime serial queue before a load, or from the main queue
+ * while no load is running.
+ *
+ * @param scale Internal render scale, 1 through 4.
+ * @return 0 on success; -1 when scale is outside 1..4 (the setting is left
+ *         unchanged and the reason is in zk_last_error() on the calling
+ *         thread).
+ */
+int32_t zk_set_render_scale(uint32_t scale);
+
+/**
+ * What a loaded system ended up drawing the 3D on: the host GPU through Vulkan
+ * (MoltenVK over Metal on iOS) with the resolution scale, whether the screens
+ * go straight to the CAMetalLayer or are read back, a request that fell back to
+ * software, or software by choice.
+ *
+ * The pointer is owned by the library and stays valid until the next status
+ * call on the same thread; copy it (String(cString:) in Swift). NULL is not
+ * expected, but treat it as "no text". Other build/probe switches
+ * (zk_hardware_probe, zk_set_hardware_renderer, zk_set_vulkan_library,
+ * zk_set_hardware_option) are declared in ios/zakuro-ios/src/lib.rs and
+ * documented in ios/zakuro-ios/README.md; this header only carries what the app
+ * calls today.
+ */
+const char *zk_hardware_status(zk_system_t system);
+
+/**
+ * Draws the 3D on the host GPU (Vulkan through MoltenVK on iOS) for the next
+ * zk_create()/zk_create_presented(). 0 is software, 1 is the GPU; the setting
+ * is process-wide and read while a system loads. A presented load always asks
+ * for the GPU; a plain zk_create() (the readback layout) needs this call so the
+ * 3D still runs on Metal and only the screen copy is read back.
+ *
+ * Returns 0.
+ */
+int32_t zk_set_hardware_renderer(int32_t enabled);
+
+/**
+ * Adds host-only horizontal margin to the loaded top screen while leaving the
+ * emulated 3DS framebuffers at their native dimensions. Call after zk_create /
+ * zk_create_presented and before the first frame. The argument is logical top-
+ * screen pixels on each side after the rotated PICA target is shown upright.
+ * Returns the margin accepted by the hardware renderer, or 0 for NULL / a
+ * non-Vulkan system.
+ */
+uint32_t zk_set_wide_margin(zk_system_t system, uint32_t margin);
+
+/* ------------------------------------------------------ frame diagnostics -- */
+
+/**
+ * Microseconds the software GPU's command-list walk took inside the last
+ * zk_run_frame() call, 0 before the first frame.
+ *
+ * zk_run_frame() advances one 3DS frame: emulated CPU/HLE work plus the
+ * software GPU's command walk, which records (and on a pipeline's first use
+ * creates) the Vulkan/Metal pipelines a scene needs. This call reports the
+ * walk's slice so a diagnostics report can tell a CPU-bound scene from a
+ * pipeline-compile hitch; the periodic `zk_perf` stderr line prints the same
+ * split as its `gpu` and `non-gpu` columns. The first frame after a load
+ * carries the boot cost, exactly like zk_last_frame_micros() (declared in
+ * ios/zakuro-ios/src/lib.rs only).
+ *
+ * Read it from the runtime's serial queue right after zk_run_frame(). The value
+ * is library-wide, so it is the last call's walk on that queue.
+ */
+uint64_t zk_last_frame_gpu_busy_micros(void);
+
+/* -------------------------------------------------- GPU execution timings -- */
+
+/**
+ * Microseconds per frame the GPU itself executed over the last `zk_perf`
+ * window, from the renderer's own timestamp queries, 0 while they are not
+ * measured.
+ *
+ * This is the GPU execution time the system Metal Performance HUD shows as
+ * GPU time, not the host time the command walk took
+ * (zk_last_frame_gpu_busy_micros()). It is measured only when the diagnostic
+ * switch was on before the load (`ZAKURO_GPU_TIMES=1`, which the app's
+ * diagnostic GPU profiles set); read zk_gpu_timing_status() first and ignore
+ * the number when it is 0. The value is an average over the last window of
+ * 60 frames and lags by at most one window, so compare scenes for the same
+ * number of frames.
+ */
+uint64_t zk_gpu_exec_micros_per_frame(void);
+
+/**
+ * 1 when the renderer measures the GPU's own execution times (the diagnostic
+ * switch is on and the device counts timestamps), 0 otherwise.
+ */
+int32_t zk_gpu_timing_status(void);
+
+/**
+ * The last window's full GPU breakdown as one line of text, or nothing while
+ * the GPU's times are not measured: execution time per frame, render passes,
+ * barriers, draws, the host's waits for the GPU, the time per kind of work
+ * (`draw`, `upload`, `clear`, `copy`, `barrier`, ...) and, when the device
+ * keeps pipeline statistics, the vertices/primitives/fragments/compute it
+ * shaded per frame. The line starts `zk_gpu:`.
+ *
+ * Writes at most capacity - 1 bytes plus a terminating NUL and returns the
+ * bytes written without the NUL; a shorter buffer truncates the line. Copy it
+ * (String(cString:) in Swift); do not keep the pointer.
+ *
+ * @param out Buffer of `capacity` writable bytes, or NULL (then nothing is
+ *            written and the line's length is returned).
+ * @param capacity Bytes available at `out`.
+ * @return Bytes written without the NUL, or the line's length when `out` is
+ *         NULL or `capacity` is 0.
+ */
+size_t zk_gpu_times_line(char *out, size_t capacity);
+
+/* ------------------------------------------------ linked (AOT) diagnostics -- */
+
+/**
+ * 1 when this build was compiled with the `linked` feature and carries
+ * 3dsrecomp-generated code, 0 for the plain interpreter shell.
+ */
+int32_t zk_linked_code(void);
+
+/** Title ID (16 hex digits as u64) the linked build was compiled for; 0 = none. */
+uint64_t zk_linked_program_id(void);
+
+/**
+ * 1 when the running System is actually executing the linked code, 0 when it
+ * fell back to the interpreter (title ID / ABI / update mismatch).
+ */
+int32_t zk_recompiled(zk_system_t system);
+
+/**
+ * Why zk_recompiled() returned 0, and how much of the work is still interpreted:
+ * the loader/AOT fallback reason plus the interpreted-instruction percentage for
+ * a system that mixes compiled and interpreted code. NULL is not expected; treat
+ * it as "no text".
+ *
+ * The pointer is owned by the library and stays valid until the next status call
+ * on the same thread; copy it (String(cString:) in Swift) before hopping to
+ * another queue. The shell logs it on every load and exports it in diagnostics.
+ */
+const char *zk_recompiled_status(zk_system_t system);
+
+/* ------------------------------------------------ GamePack registration (AOT) -- */
+
+/*
+ * Host side of the per-game AOT GamePack C ABI v1
+ * (ios/zakuro-ios/include/zakuro_gamepack.h). AOTPackageLoader.swift calls the
+ * loaded pack's zk_gamepack_register() export, which reaches the runtime through
+ * zk_register_gamepack(); these three are the shell-side read/cleanup calls used
+ * to keep the single registration slot in step across games.
+ */
+int32_t zk_gamepack_registered(void);
+uint64_t zk_registered_gamepack_title_id(void);
+int32_t zk_unregister_gamepack(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* ZAKURO_BRIDGE_H */

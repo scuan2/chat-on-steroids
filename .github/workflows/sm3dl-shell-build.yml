@@ -1,0 +1,92 @@
+﻿name: SM3DL Custom Shell Build
+
+on:
+  push:
+    branches:
+      - build-sm3dl-shell-20261123
+
+permissions:
+  contents: read
+
+jobs:
+  build-shell:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Check out build carrier
+        uses: actions/checkout@v4
+
+      - name: Prepare exact 3ds2apple source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/HFYKratos/3ds2apple.git sm3dl
+          git -C sm3dl checkout e47df11a951aa8d16a6ca77cd4875476b118b69e
+          rsync -a .sm3dl-build/overlay/ sm3dl/
+          chmod +x sm3dl/scripts/*.sh
+          git -C sm3dl diff --check
+          echo "overlay files:"
+          git -C sm3dl status --short
+
+      - name: Install Rust iOS target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Install XcodeGen
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          xcodegen --version
+          xcodebuild -version
+
+      - name: Build custom Zakuro iOS runtime
+        working-directory: sm3dl
+        shell: bash
+        env:
+          ZAKURO_STRICT_PATCHES: '1'
+        run: |
+          set -euo pipefail
+          scripts/build-zakuro-ios.sh
+          file build/ios/libzakuro_ios.a
+          shasum -a 256 build/ios/libzakuro_ios.a
+
+      - name: Build unsigned custom shell
+        working-directory: sm3dl
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/build-ios-app.sh --keep-project
+
+      - name: Download MoltenVK and package ROM-free shell
+        working-directory: sm3dl
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/third_party out/shell
+          curl -fL -o build/third_party/MoltenVK-ios.tar \
+            https://github.com/KhronosGroup/MoltenVK/releases/download/v1.4.2/MoltenVK-ios.tar
+          tar -C build/third_party -xf build/third_party/MoltenVK-ios.tar
+          MVK="$PWD/build/third_party/MoltenVK/MoltenVK/dynamic/MoltenVK.xcframework/ios-arm64"
+          test -f "$MVK/MoltenVK.framework/MoltenVK"
+          MOLTENVK_FRAMEWORK="$MVK/MoltenVK.framework" scripts/package-ipa.sh \
+            ios/app/build/Release-iphoneos/3ds2apple.app \
+            3ds2apple-shell \
+            --out-dir out/shell \
+            --manifest out/shell/manifest.json \
+            --require-moltenvk
+          test -s out/shell/3ds2apple-shell.ipa
+          test -s out/shell/manifest.json
+          shasum -a 256 out/shell/3ds2apple-shell.ipa
+          cat out/shell/manifest.json
+
+      - name: Upload custom shell
+        uses: actions/upload-artifact@v4
+        with:
+          name: sm3dl-custom-shell
+          path: |
+            sm3dl/out/shell/3ds2apple-shell.ipa
+            sm3dl/out/shell/manifest.json
+          if-no-files-found: error
+          retention-days: 1
