@@ -65,7 +65,7 @@ use zakuro_gpu::{
     ScreenOrientation,
 };
 
-use crate::{perf, set_last_error};
+use crate::{gamepack, perf, set_last_error};
 
 /// A `UIView*` the app handed over, as the raw-window-handle pair
 /// `ash-window` needs to make a `VkSurface` from its `CAMetalLayer`.
@@ -721,9 +721,12 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
         let logical_width = 240.0 * top_image.width as f32 / top_image.height as f32;
         presenter.presenter.set_top_width(logical_width);
     }
-    presenter
-        .presenter
-        .set_mario_course_hud(system.mario_course_hud_active());
+    // The shell can identify this title exactly from its registered AOT
+    // GamePack. Keep the lower LCD hidden, but composite its live Star Medals
+    // and reserve slot into the dedicated iPhone HUD for Mario.
+    presenter.presenter.set_mario_course_hud(
+        gamepack::registered_title_id() == Some(0x0004_0000_0005_4000),
+    );
     presenter
         .presenter
         .set_mario_pause_overlay(system.mario_pause_active());

@@ -1553,12 +1553,12 @@ pub extern "C" fn zk_set_input(
     let system = unsafe { &mut *(system as *mut System) };
     let (c_stick_x, c_stick_y) = C_STICK.with(Cell::get);
     let mut pad = PadState::from_bits_truncate(buttons);
-    let reserve_shortcut =
-        touch == 0 && pad.contains(PadState::UP) && system.mario_course_hud_active();
+    let mario_3d_land = gamepack::registered_title_id() == Some(0x0004_0000_0005_4000);
+    let reserve_shortcut = touch == 0 && pad.contains(PadState::UP) && mario_3d_land;
     if reserve_shortcut {
-        // In a course the lower LCD's centre slot is the reserve item. Consume
-        // D-pad Up as that touch only while the course-HUD detector is active;
-        // outside courses Up stays an ordinary 3DS D-pad input.
+        // This dedicated Mario GamePack uses D-pad Up for the lower LCD's
+        // reserve-item slot. The iPhone has no stereoscopic-depth mode to
+        // preserve here, and no other title is affected by this mapping.
         pad.remove(PadState::UP);
     }
     system.set_input(InputState {
