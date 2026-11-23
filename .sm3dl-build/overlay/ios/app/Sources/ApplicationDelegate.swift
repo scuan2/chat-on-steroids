@@ -21,7 +21,7 @@ enum AppOrientation {
         // does not reliably switch between both landscape masks for a guest, so
         // pin the landscape preference to the physical orientation used with the
         // Kishi: the iPhone's USB-C edge is on the player's right.
-        case .landscape: return .landscapeLeft
+        case .landscape: return .landscapeRight
         }
     }
 
