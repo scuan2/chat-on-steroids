@@ -1,0 +1,21 @@
+diff --git a/crates/zakuro-core/src/lib.rs b/crates/zakuro-core/src/lib.rs
+index c0008c5..a6de0e4 100644
+--- a/crates/zakuro-core/src/lib.rs
++++ b/crates/zakuro-core/src/lib.rs
+@@ -954,9 +954,13 @@ impl System {
+ 
+         // grab any buffer swap the game queued straight in GSP shared memory b4 the LCDs latch whatever's configured
+         services::gsp::refresh(self);
+-        if self.gpu.interpolates() {
+-            self.pace();
+-        }
++        // Frame finalization is not only for interpolation.  Mario's native
++        // lower-screen HUD detector publishes its per-frame course state from
++        // Gpu::frame_done(), which pace() calls whenever the title swaps in a
++        // new top-screen picture.  iOS normally runs with interpolation off, so
++        // gating pace() on interpolation left that course state permanently
++        // stale and disabled both the HUD overlay and reserve-item input.
++        self.pace();
+ 
+         // both LCDs finish scanning out, in that order
+         services::gsp::signal_interrupt(self, services::gsp::InterruptId::Pdc0);
