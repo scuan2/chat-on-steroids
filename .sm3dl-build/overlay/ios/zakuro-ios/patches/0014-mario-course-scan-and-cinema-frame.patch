@@ -1,0 +1,144 @@
+diff --git a/crates/zakuro-gpu/src/raster.rs b/crates/zakuro-gpu/src/raster.rs
+index ab16270..5c742c9 100644
+--- a/crates/zakuro-gpu/src/raster.rs
++++ b/crates/zakuro-gpu/src/raster.rs
+@@ -779,7 +779,6 @@ const MARIO_HUD_MEDALS: u32 = 4;
+ const MARIO_HUD_LEVEL: u32 = 8;
+ const MARIO_HUD_ALL: u32 =
+     MARIO_HUD_LIVES | MARIO_HUD_RESERVE | MARIO_HUD_MEDALS | MARIO_HUD_LEVEL;
+-const MARIO_HUD_RECENT_FRAMES: u8 = 8;
+ 
+ #[derive(Default)]
+ struct MarioCourseUiDraw {
+@@ -896,6 +895,71 @@ fn mario_course_ui_draw(
+     MarioCourseUiDraw::default()
+ }
+ 
++/// Super Mario 3D Land's cutscenes draw two 400x20 black matte quads over the
++/// already-widened top screen.  The PC port identifies and omits exactly this
++/// draw in 16:9; do the same here instead of stretching the matte into the host
++/// margins and leaving visible seams.
++fn mario_cinema_frame(
++    shaded: &[Vertex],
++    target: &ColorTarget,
++    textures: &[Option<BoundTexture>; 3],
++    registers: &[u32],
++    wide_margin: u32,
++) -> bool {
++    if wide_margin == 0
++        || shaded.len() != 12
++        || target.buffer_width != 240
++        || target.buffer_height != 400
++        || registers[REG_DEPTH_COLOR_MASK] != 0x1f00
++        || registers[REG_STENCIL_TEST] & 1 != 0
++        || registers[REG_COLOR_OPERATION] & (1 << 8) == 0
++        || registers[REG_BLEND_FUNC] != 0x76760000
++    {
++        return false;
++    }
++    let Some(texture) = textures[0].as_ref() else {
++        return false;
++    };
++    if texture.width != 8
++        || texture.height != 8
++        || texture.texels.len() < 64
++        || !texture.texels.iter().take(64).all(|&pixel| pixel == [255; 4])
++    {
++        return false;
++    }
++
++    // The top LCD is rotated in PICA clip space.  Each matte is a six-vertex
++    // quad spanning the full screen width and exactly 20 pixels in from one
++    // horizontal edge.
++    const INNER: f32 = 1.0 - 2.0 * 20.0 / 240.0;
++    let near = |a: f32, b: f32| (a - b).abs() < 0.0005;
++    let w = shaded[0].clip[3];
++    if !(w > 0.0) {
++        return false;
++    }
++    let mut corners = [0u32; 2];
++    let mut sides = [false; 2];
++    for quad in 0..2 {
++        let first = quad * 6;
++        let positive = shaded[first].clip[0] > 0.0;
++        sides[quad] = positive;
++        for vertex in &shaded[first..first + 6] {
++            let [x, y, z, vw] = vertex.clip;
++            if !near(vw, w) || !near(z / vw, -0.5) || ((x > 0.0) != positive) {
++                return false;
++            }
++            let x = (x / vw).abs();
++            let y = y / vw;
++            let outer = near(x, 1.0);
++            if (!outer && !near(x, INNER)) || !near(y.abs(), 1.0) {
++                return false;
++            }
++            corners[quad] |= 1 << ((if outer { 2 } else { 0 }) + if y > 0.0 { 1 } else { 0 });
++        }
++    }
++    sides[0] != sides[1] && corners == [15, 15]
++}
++
+ /// where each varying the rasterizer needs lives in the shader's output registers, as GPUREG_SH_OUTMAP_O* describes it
+ #[derive(Debug, Clone, Copy)]
+ struct OutputMap {
+@@ -1929,8 +1993,6 @@ pub struct Resources {
+     pub(crate) hardware: Option<hardware::Hardware>,
+     /// Course-HUD draw signatures seen since the last title frame completed.
+     mario_hud_parts: u32,
+-    /// How recently each exact course-HUD signature was seen, in completed title frames.
+-    mario_hud_recent: [u8; 4],
+     /// Whether the last completed title frame was a Mario course frame.
+     mario_hud_active: bool,
+     /// Pause-menu rows seen since the last title frame completed.
+@@ -1943,24 +2005,7 @@ pub struct Resources {
+ 
+ impl Resources {
+     pub(crate) fn mario_hud_frame_done(&mut self) {
+-        // Mario can split the four lower-screen course widgets across nearby
+-        // completed frames on the host-GPU path. Keep the detector strict — all
+-        // four exact signatures are still required — but do not require them to
+-        // land in the same frame. The short window also drains immediately after
+-        // leaving a course, so unrelated menu draws cannot keep the overlay alive.
+-        for (recent, part) in self.mario_hud_recent.iter_mut().zip([
+-            MARIO_HUD_LIVES,
+-            MARIO_HUD_RESERVE,
+-            MARIO_HUD_MEDALS,
+-            MARIO_HUD_LEVEL,
+-        ]) {
+-            *recent = if self.mario_hud_parts & part != 0 {
+-                MARIO_HUD_RECENT_FRAMES
+-            } else {
+-                recent.saturating_sub(1)
+-            };
+-        }
+-        self.mario_hud_active = self.mario_hud_recent.iter().all(|&recent| recent != 0);
++        self.mario_hud_active = self.mario_hud_parts & MARIO_HUD_ALL == MARIO_HUD_ALL;
+         self.mario_pause_active =
+             self.mario_pause_rows == 7 || (self.mario_pause_active && self.mario_pause_dialog);
+         self.mario_hud_parts = 0;
+@@ -3510,8 +3555,12 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
+         // Mario shares the 240x400 target between both LCDs. Its lower LCD
+         // is a 320-row viewport inside that target: keep its geometry at the
+         // native width and let the hardware backend center it by the margin.
+-        let lower = margin != 0
+-            && buffer_width == 240
++        // Detect the lower LCD from its native target/viewport shape, not from
++        // whether host widescreen margins happened to be allocated already.
++        // The working PC port scans this same native PICA draw regardless of
++        // presentation mode; tying the scan to margin != 0 can skip every HUD
++        // draw even while TopOnly presentation is active.
++        let lower = buffer_width == 240
+             && buffer_height == 400
+             && (viewport_height - 320.0).abs() < 0.5;
+         if lower {
+@@ -3693,6 +3742,9 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
+         #[cfg(feature = "vulkan")]
+         Vertices::Raw { .. } => return None,
+     };
++    if mario_cinema_frame(shaded, &state.target, state.textures, registers, wide_margin) {
++        return Some(0);
++    }
+     let widened_vertices: Vec<Vertex>;
+     let widened_placement: Placement;
+     let (shaded, placement) = if wide_margin != 0 {
