@@ -209,10 +209,6 @@ enum Presentation: Equatable {
 /// Owns the Zakuro runtime handle, the AOT game launch pipeline and the frame loop.
 final class ROMSession: ObservableObject, SaveStateRuntime {
     private static let mario3DLandUSA = "0004000000054000"
-    // Match the recomp's established 16:9 path: render 428x240 (14 host
-    // pixels per side), then present the centered 16:9 crop. 2133x1200 is
-    // the nearest integral 5x drawable, essentially panel-native on iPhone 16 Pro.
-    private static let marioLogicalSize = CGSize(width: 426.6, height: 240)
     private static let marioRenderScale: CGFloat = 5
 
     enum Phase: Equatable {
@@ -1650,23 +1646,22 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
     /// Pushes the layout, rotation, render scale and integer-scaling choice into
     /// the Metal view. Main queue only.
     private func configurePresentedGeometry(_ view: MetalScreenView) {
-        // The custom GPU layout fills the whole game-view stage at native device
-        // pixels; every arrangement keeps the presenter's own drawable size.
-        if screenLayout == .custom {
+        // Custom layouts and Mario's dedicated presentation own the whole
+        // game-view stage. Mario's presenter centres the 16:9 game picture in
+        // that surface and uses the otherwise black side pillars for host UI.
+        let mario = currentGame?.titleID == Self.mario3DLandUSA
+        if screenLayout == .custom || mario {
             view.setCustomFill(true)
             presentedDrawableSize = view.drawablePixelSize
             return
         }
         view.setCustomFill(false)
-        let mario = currentGame?.titleID == Self.mario3DLandUSA
-        let native = mario
-            ? Self.marioLogicalSize
-            : ScreenGeometry.nativePixelSize(layout: screenLayout, rotation: screenRotation)
-        let scale = mario ? Self.marioRenderScale : requestedRenderScale
+        let native = ScreenGeometry.nativePixelSize(layout: screenLayout, rotation: screenRotation)
+        let scale = requestedRenderScale
         view.setPresentedGeometry(
             nativePixelSize: native,
             renderScale: scale,
-            integerScaling: mario ? false : integerScaleSetting
+            integerScaling: integerScaleSetting
         )
         presentedDrawableSize = view.drawablePixelSize
     }

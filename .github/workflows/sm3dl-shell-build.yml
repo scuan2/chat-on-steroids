@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - build-sm3dl-shell-20261123
+      - sm3dl-ui-reset
 
 permissions:
   contents: read

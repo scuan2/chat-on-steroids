@@ -61,8 +61,8 @@ use zakuro_core::System;
 use zakuro_gpu::backend::vulkan::VulkanPresenter;
 use zakuro_gpu::backend::TOP_WIDTH;
 use zakuro_gpu::{
-    layout, CustomViewports, Overlay, PresentError, Presenter, ScreenImage, ScreenLayout,
-    ScreenOrientation,
+    layout, CustomViewports, Overlay, OverlayMesh, OverlayTexture, OverlayVertex, PresentError,
+    Presenter, ScreenImage, ScreenLayout, ScreenOrientation,
 };
 
 use crate::{perf, set_last_error};
@@ -196,6 +196,27 @@ pub struct PresenterHandle {
     size: (u32, u32),
     /// Whether the first presented frame already logged which path it took.
     logged_mode: bool,
+    /// Last native Mario medal image uploaded through the host overlay.
+    mario_medal_generation: u64,
+    mario_medal_size: [u32; 2],
+}
+
+const MARIO_MEDAL_TEXTURE: u64 = 0x534d_3344_4d45_444c; // "SM3DMEDL"
+
+fn overlay_quad(texture: u64, rect: [f32; 4], clip: [u32; 4]) -> OverlayMesh {
+    let [x, y, width, height] = rect;
+    let white = [255, 255, 255, 255];
+    OverlayMesh {
+        texture,
+        clip,
+        vertices: vec![
+            OverlayVertex { position: [x, y], uv: [0.0, 0.0], color: white },
+            OverlayVertex { position: [x + width, y], uv: [1.0, 0.0], color: white },
+            OverlayVertex { position: [x + width, y + height], uv: [1.0, 1.0], color: white },
+            OverlayVertex { position: [x, y + height], uv: [0.0, 1.0], color: white },
+        ],
+        indices: vec![0, 1, 2, 0, 2, 3],
+    }
 }
 
 /// What presenting a frame of `system` through a presenter will do: the
@@ -334,6 +355,8 @@ pub extern "C" fn zk_presenter_create(
                 presenter,
                 size: (width, height),
                 logged_mode: false,
+                mario_medal_generation: 0,
+                mario_medal_size: [0, 0],
             })) as *mut c_void
         }
         Err(error) => {
@@ -711,22 +734,74 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
         pixels: &[],
         gpu: None,
     };
-    let overlay = Overlay::default();
+    let mut overlay = Overlay::default();
 
     // A host-widened top screen is still a 240-line logical 3DS display, but
     // its GPU image can be wider than the console's native 400 pixels. Feed
     // that real aspect to the presenter so TopOnly stays aspect-correct.
     let top_image = top.image();
-    if top_image.width > 0 && top_image.height > 0 {
-        let logical_width = 240.0 * top_image.width as f32 / top_image.height as f32;
-        presenter.presenter.set_top_width(logical_width);
-    }
+    let logical_width = if top_image.width > 0 && top_image.height > 0 {
+        240.0 * top_image.width as f32 / top_image.height as f32
+    } else {
+        TOP_WIDTH
+    };
+    presenter.presenter.set_top_width(logical_width);
+    let mario_course = system.mario_course_hud_active();
     presenter
         .presenter
-        .set_mario_course_hud(system.mario_course_hud_active());
+        .set_mario_course_hud(mario_course);
     presenter
         .presenter
         .set_mario_pause_overlay(system.mario_pause_active());
+
+    // Mario's Star Medals are replayed from their original lower-screen sprite
+    // draws into transparent RGBA by the renderer. Upload only when that tiny
+    // image changes, then composite it in the real right pillar. This avoids
+    // cropping the lower LCD's coloured backing entirely.
+    if mario_course {
+        if let Some((pixels, [medal_width, medal_height], generation)) = system.mario_medal_image() {
+            if medal_width > 0 && medal_height > 0 {
+                if generation != presenter.mario_medal_generation {
+                    let same_size = presenter.mario_medal_size == [medal_width, medal_height]
+                        && presenter.mario_medal_generation != 0;
+                    overlay.textures.push(OverlayTexture {
+                        id: MARIO_MEDAL_TEXTURE,
+                        offset: same_size.then_some([0, 0]),
+                        size: [medal_width, medal_height],
+                        pixels: pixels.to_vec(),
+                        linear: true,
+                    });
+                    presenter.mario_medal_generation = generation;
+                    presenter.mario_medal_size = [medal_width, medal_height];
+                }
+
+                if let Some(game) = layout(
+                    presenter.size.0,
+                    presenter.size.1,
+                    ScreenLayout::TopOnly,
+                    ScreenOrientation::North,
+                    logical_width,
+                    false,
+                )
+                .0
+                {
+                    let pillar_left = game.x + game.width;
+                    let pillar_width = (presenter.size.0 as f32 - pillar_left).max(0.0);
+                    let width = (game.height * 0.105).min(pillar_width * 0.72);
+                    if width >= 8.0 {
+                        let height = width * medal_height as f32 / medal_width as f32;
+                        let x = pillar_left + (pillar_width - width) * 0.5;
+                        let y = game.y + game.height * 0.040;
+                        overlay.meshes.push(overlay_quad(
+                            MARIO_MEDAL_TEXTURE,
+                            [x, y, width, height],
+                            [0, 0, presenter.size.0, presenter.size.1],
+                        ));
+                    }
+                }
+            }
+        }
+    }
 
     if !presenter.logged_mode {
         presenter.logged_mode = true;
