@@ -593,6 +593,45 @@ pub extern "C" fn zk_present_layout_size(
     1
 }
 
+/// Toggles Super Mario 3D Land's temporary lower-touchscreen compatibility
+/// inset. The presenter rejects it during active course gameplay or its
+/// dedicated pause overlay. Returns 1 while visible, 0 while hidden/rejected,
+/// and -1 for a NULL presenter.
+#[no_mangle]
+pub extern "C" fn zk_presenter_toggle_mario_touch_overlay(presenter: *mut c_void) -> i32 {
+    let Some(presenter) = (unsafe { (presenter as *mut PresenterHandle).as_mut() }) else {
+        return -1;
+    };
+    presenter.presenter.toggle_mario_touch_overlay() as i32
+}
+
+/// Maps a touch on Mario's temporary lower-screen inset to native 3DS
+/// touchscreen coordinates. Drawing and mapping use the same presenter-owned
+/// geometry, so they cannot drift apart.
+#[no_mangle]
+pub extern "C" fn zk_present_mario_touch_map(
+    presenter: *mut c_void,
+    x: f32,
+    y: f32,
+    out_x: *mut u16,
+    out_y: *mut u16,
+) -> i32 {
+    if out_x.is_null() || out_y.is_null() {
+        return 0;
+    }
+    let Some(presenter) = (unsafe { (presenter as *mut PresenterHandle).as_ref() }) else {
+        return 0;
+    };
+    let Some((touch_x, touch_y)) = presenter.presenter.mario_touch_map(x, y) else {
+        return 0;
+    };
+    unsafe {
+        *out_x = touch_x;
+        *out_y = touch_y;
+    }
+    1
+}
+
 /// Releases a presenter returned by [`zk_presenter_create`].
 ///
 /// Release the systems loaded with [`zk_create_presented`] first (or at least

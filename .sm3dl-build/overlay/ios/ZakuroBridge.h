@@ -550,6 +550,22 @@ int32_t zk_present_layout_size(uint32_t layout, uint32_t orientation,
                                uint32_t *out_width, uint32_t *out_height);
 
 /**
+ * Toggles Super Mario 3D Land's temporary lower-touchscreen inset. The
+ * presenter rejects the toggle during active course gameplay and its dedicated
+ * pause overlay. Returns 1 while visible, 0 while hidden/rejected, -1 for NULL.
+ */
+int32_t zk_presenter_toggle_mario_touch_overlay(zk_presenter_t presenter);
+
+/**
+ * Maps a touch in Mario's temporary lower-screen inset to native lower-LCD
+ * pixels. x/y are normalised to the whole presented layer. Returns 1 and writes
+ * out_x/out_y only while the inset is visible and the point is inside it.
+ */
+int32_t zk_present_mario_touch_map(zk_presenter_t presenter,
+                                  float x, float y,
+                                  uint16_t *out_x, uint16_t *out_y);
+
+/**
  * Maps a touch on the presented layer to lower-screen pixels.
  *
  * @param width       Drawable width in pixels (as passed to zk_presenter_create /

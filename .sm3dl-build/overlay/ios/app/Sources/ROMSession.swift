@@ -209,10 +209,9 @@ enum Presentation: Equatable {
 /// Owns the Zakuro runtime handle, the AOT game launch pipeline and the frame loop.
 final class ROMSession: ObservableObject, SaveStateRuntime {
     private static let mario3DLandUSA = "0004000000054000"
-    // Match the recomp's established 16:9 path: render 428x240 (14 host
-    // pixels per side), then present the centered 16:9 crop. 2133x1200 is
-    // the nearest integral 5x drawable, essentially panel-native on iPhone 16 Pro.
-    private static let marioLogicalSize = CGSize(width: 426.6, height: 240)
+    // Match the recomp's established host-widened path at 5x internal scale.
+    // The Metal surface itself now follows the whole landscape stage so the
+    // presenter owns the black pillars as well as the centred 16:9 game image.
     private static let marioRenderScale: CGFloat = 5
 
     enum Phase: Equatable {
@@ -848,11 +847,17 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
     /// the first call starts it. The view calls this from `onAppear`.
     func startControllerSupport() {
         guard controllerManager == nil else { return }
-        let manager = GameControllerManager(input: inputState) { [weak self] name in
-            DispatchQueue.main.async {
-                self?.controllerName = name
+        let manager = GameControllerManager(
+            input: inputState,
+            onConnectionChange: { [weak self] name in
+                DispatchQueue.main.async {
+                    self?.controllerName = name
+                }
+            },
+            onRightThumbstickClick: { [weak self] in
+                self?.toggleMarioTouchscreen()
             }
-        }
+        )
         controllerManager = manager
         manager.start()
     }
@@ -882,6 +887,18 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
     /// Touchscreen contact in lower-screen pixels; nil releases the touch.
     func setTouchPoint(x: UInt16?, y: UInt16?) {
         inputState.setTouch(x: x, y: y)
+    }
+
+    /// Mario-only host control: R3 toggles a temporary copy of the original
+    /// lower touchscreen while outside active course gameplay. The presenter
+    /// itself rejects the toggle in a course or while its dedicated pause panel
+    /// is active, so no 3DS input is stolen and no title state is guessed here.
+    private func toggleMarioTouchscreen() {
+        guard currentGame?.titleID == Self.mario3DLandUSA, let presenter else { return }
+        runtimeQueue.async { [weak self] in
+            guard let self, self.framePresenter == presenter else { return }
+            _ = zk_presenter_toggle_mario_touch_overlay(presenter)
+        }
     }
 
     // MARK: - Settings (main queue)
@@ -1650,23 +1667,23 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
     /// Pushes the layout, rotation, render scale and integer-scaling choice into
     /// the Metal view. Main queue only.
     private func configurePresentedGeometry(_ view: MetalScreenView) {
-        // The custom GPU layout fills the whole game-view stage at native device
-        // pixels; every arrangement keeps the presenter's own drawable size.
-        if screenLayout == .custom {
+        // Custom GPU layouts and Mario's dedicated presentation fill the whole
+        // game-view stage at native device pixels. Mario's presenter then keeps
+        // the 16:9 top screen centred inside that surface, leaving real black
+        // pillars that its compact HUD can use without covering the game.
+        let mario = currentGame?.titleID == Self.mario3DLandUSA
+        if screenLayout == .custom || mario {
             view.setCustomFill(true)
             presentedDrawableSize = view.drawablePixelSize
             return
         }
         view.setCustomFill(false)
-        let mario = currentGame?.titleID == Self.mario3DLandUSA
-        let native = mario
-            ? Self.marioLogicalSize
-            : ScreenGeometry.nativePixelSize(layout: screenLayout, rotation: screenRotation)
-        let scale = mario ? Self.marioRenderScale : requestedRenderScale
+        let native = ScreenGeometry.nativePixelSize(layout: screenLayout, rotation: screenRotation)
+        let scale = requestedRenderScale
         view.setPresentedGeometry(
             nativePixelSize: native,
             renderScale: scale,
-            integerScaling: mario ? false : integerScaleSetting
+            integerScaling: integerScaleSetting
         )
         presentedDrawableSize = view.drawablePixelSize
     }
@@ -1748,6 +1765,33 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         var y: UInt16 = 0
         let normX = Float(min(max(normalisedX, 0), 1))
         let normY = Float(min(max(normalisedY, 0), 1))
+        if currentGame?.titleID == Self.mario3DLandUSA {
+            guard let presenter else {
+                setTouchPoint(x: nil, y: nil)
+                return
+            }
+            // The presenter owns both the inset's visibility and geometry. Map
+            // Mario touches on the same serial queue that presents frames, then
+            // publish the resulting 3DS touch through the thread-safe InputState.
+            runtimeQueue.async { [weak self] in
+                guard let self, self.framePresenter == presenter else { return }
+                var touchX: UInt16 = 0
+                var touchY: UInt16 = 0
+                let onLowerScreen = zk_present_mario_touch_map(
+                    presenter,
+                    normX,
+                    normY,
+                    &touchX,
+                    &touchY
+                )
+                if onLowerScreen != 0 {
+                    self.inputState.setTouch(x: touchX, y: touchY)
+                } else {
+                    self.inputState.setTouch(x: nil, y: nil)
+                }
+            }
+            return
+        }
         let onLowerScreen: Int32
         if screenLayout == .custom {
             // The GPU custom path turns each screen's picture inside its own

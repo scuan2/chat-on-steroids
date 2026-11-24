@@ -1,0 +1,312 @@
+diff --git a/crates/zakuro-gpu/shaders/present.frag b/crates/zakuro-gpu/shaders/present.frag
+index 97c3d16..e81d35f 100644
+--- a/crates/zakuro-gpu/shaders/present.frag
++++ b/crates/zakuro-gpu/shaders/present.frag
+@@ -81,19 +81,23 @@ void main() {
+ #else
+     vec3 rgb = shown(screen, crop.area, crop.bounds);
+     if (crop.mode == 3) {
+-        // Mario 3D Land course medals: the original lower-screen status strip
+-        // is green behind the three medal sprites. Remove only that backing;
+-        // yellow/black/white medal pixels stay untouched.
+-        float green_backing = step(0.34, rgb.g)
+-            * step(rgb.r * 1.14, rgb.g)
+-            * step(rgb.b * 1.08, rgb.g);
+-        float alpha = 1.0 - green_backing;
++        // Mario 3D Land course medal: each medal is presented from its own
++        // square source instead of the original rectangular status strip. A
++        // soft circular cut keeps only the icon and never exposes strip edges.
++        float radius = length(uv * 2.0 - 1.0);
++        float alpha = 1.0 - smoothstep(0.88, 1.0, radius);
+         colour = vec4(rgb * alpha, alpha);
+     } else if (crop.mode == 4) {
+-        // The reserve item is a live 3D model inside a circular slot. Keep the
+-        // native circle and fade only its square crop's corners.
++        // The reserve item is a live 3D model. The source crop is deliberately
++        // inside the original white/yellow touch-slot ring; remove the remaining
++        // pale slot interior and keep the model itself. This operates on the
++        // already high-resolution lower-screen GPU image, not a CPU/upscaled
++        // screenshot.
+         float radius = length(uv * 2.0 - 1.0);
+-        float alpha = 1.0 - smoothstep(0.96, 1.0, radius);
++        vec3 slot = vec3(0.58, 0.69, 0.72);
++        float slot_distance = length(rgb - slot);
++        float alpha = smoothstep(0.105, 0.235, slot_distance)
++            * (1.0 - smoothstep(0.90, 1.0, radius));
+         colour = vec4(rgb * alpha, alpha);
+     } else {
+         colour = vec4(rgb, 1.0);
+diff --git a/crates/zakuro-gpu/shaders/present.frag.spv b/crates/zakuro-gpu/shaders/present.frag.spv
+index 193c6b31c4da570fc8fbda284f092dd7aabb1583..72c27b35e487976884b2423863f2b77da6f0f7a5 100644
+GIT binary patch
+delta 1517
+zcmZ9L%WG3n5XL7rX;Rx8t+rL;qYvv!MHHn7lGeHrcP$ET1POg$G1$__#?4)b2rfj)
+zpHOh&LMZ(UME5SU(l);8Bi6Tl`uKjyITCuwaOV5wyJzOkOrD;&cQPFhx>9B_YqYc-
+zyq~@hE6?UygKG(!H?xV{(CGA}S)C>9t#B?sel@2PT-G@_mLHp*sN#)H`XFXDnID@H
+zEq&5b4qq7>ot(;D9~`dm2@4C4gWIw4-1+#EAS$6YJ9AhGl5!ShkIv<KJA^;VkINcl
+zryZsUIP{%5S7Zr?c|WeCr5i21{=S58apu^6Tqj%}IMsVZ*+S*DqzGO@NYKBSmY;1X
+zW<B02T$~y2@p!xN$jC^ckR0x#Q|f7@$fG*xjK_E6(;1J6)0tWv7BZ>%=%*qp7T9y0
+zS$$Nq&IMUUc2^w*zmzS=O0s^(y^?>)*-gj27Dh`f)Th##H!>x*vohj6Y9up<SH7qs
+zdM5xGT73n-m(NSbWs5Qrp&=2MesCN*E~FK3e1Q6EpJdM*M!zIO!v_)nEJL$oQS~K6
+zUu1{|T#~Qy5%PHMn|wHm^W1mG1v>lHVHW3yjQ7zK=WYsRk%+CT<1cisG|6EEeM(A;
+zeidd@&CxQR?4j6hovSi9_HJ3%tn1`i)AtfvleMWP28r(n`CESNApZ!%m1KU9f8}o)
+zq?)435EJy1jEU2)QYH@H!_L9uvv2IRA40u+KLnb-MHmf31UJY>1MhP*%8%K_Y7zuo
+z%;FN@Vg|KMKAhi{Ci(hRwuL_se;PDizeE0p6%I9aN4MN;TSf6&i;NVZPB>rtPWire
+zQtlE);}>YRd^GSrO-4Q%zZZMtqvLU0WP2S6?}hsuSGz#_#c=_8;#^LlED$jkh%I2^
+zOx_pXE}z2v-5tVkJOg&Q`uFK{B)k_Ma9nK>UE;U^J#p5=7eTDHh;^HL5VocN0hi*f
+Ap#T5?
+
+delta 1456
+zcmZ9L$xc*36o#w2ndw$kP;o$7mJZQqh>2lxW#R_n!lh}DAd!G#Sh=_hLrh$#gtu^E
+zVt4~}?-MBCtf(js436Iiw~`Jw{dfK6KSP~+s_wm$Pfiqa*|zEsGNC>cLfcf~d}j4w
+zsVRG|D$IruhQ<d6M=$o52CfW`4q;b@itvNAG;;NFDYaKw2gXLmCdN1XwV4pcOP7Wx
+zu5Z{4)AQL|nbn!$+~aIANAQit2c3r~R0V$nCKsl<v=75Sf-H#sMfkOj+g+{rSKv8N
+z2TrH9o2waLWUXZLiqy7#JvL8wTCXN-L%92BVtS!!u;`oc?(4;lvf6pM-7q~>J)2}v
+zS7_=P5j{-6$a(M-90wh2=vFU)dY&5EF9E6H7?=b4WBx0+`A0y^e+^fkWDoP-0<>g(
+zMltan;^vLtqp8P@KfvS07SSJzF2HTfm{{`@+?vilHuD*-J{gjYZoXhBE`pf&6~4Kd
+zB{cQe%r|&!#v1x#GvDDhWK1W==#5j0P5gw<Cj8w@N3smR0Cbq(0jimhXI%p}6bt-<
+z8*_(z{l9@R>M`aI+?c*}kH2u^eAE)p;vZ1-O=6&in%A|LGxu6%&@5oQev8|v*Hqss
+z(a+)Dr!2OUJcFHsceC~Y8!NI_prI$>K0)mWRS1gS@nwqEu==cd0pZnPKd`vmLObx+
+z!JAo~f_5HT&2OVO)e3MYE1b4*ThQ{EQz7Wgb0?j|Rye=)t_|?*{BG3aNVmglGt>R`
+z?TPLN%*NF1DKx>$PiZH%G4Ygk!HrRmC3nM(iNkM(8|M?XJ*lRgYDw6eish%Y56uE5
+z=(l)0C4HWf!*!4j)Fy1a1#aVU!volAK2d8;HRZl=cH`qIreb*$2hl8Gf_^6-o6uL@
+ML``O9Dc@4~4=o#_@Bjb+
+
+diff --git a/crates/zakuro-gpu/src/backend/vulkan.rs b/crates/zakuro-gpu/src/backend/vulkan.rs
+index 53e2514..7ed9923 100644
+--- a/crates/zakuro-gpu/src/backend/vulkan.rs
++++ b/crates/zakuro-gpu/src/backend/vulkan.rs
+@@ -143,6 +143,9 @@ pub struct VulkanPresenter {
+     /// Whether the most recent title frame contains Mario's lower-screen pause
+     /// UI; this is drawn only while paused, never as a permanent second screen.
+     mario_pause_overlay: bool,
++    /// User-requested access to Mario's real lower touchscreen while outside a
++    /// course. This is a temporary interactive inset, toggled by R3 on iOS.
++    mario_touch_overlay: bool,
+     /// set when the swapchain no longer matches the window
+     stale: bool,
+ }
+@@ -431,6 +434,7 @@ impl VulkanPresenter {
+             stereo: Stereo::default(),
+             mario_course_hud: false,
+             mario_pause_overlay: false,
++            mario_touch_overlay: false,
+             stale: false,
+         };
+ 
+@@ -893,11 +897,10 @@ impl VulkanPresenter {
+                         device.cmd_draw(command_buffer, 3, 1, 0, 0);
+                     };
+ 
+-                    // The dedicated iPhone presentation is exact 16:9 centered
+-                    // in a wider landscape surface. On the Kishi, landscape-left
+-                    // keeps the Dynamic Island in the left pillar, so use the
+-                    // otherwise empty right pillar for the two tiny course
+-                    // indicators instead of covering Mario or the game's timer.
++                    // The dedicated iPhone presentation owns the whole landscape
++                    // drawable; the 16:9 game remains centred inside it. Keep the
++                    // two tiny course indicators entirely in the empty right
++                    // pillar instead of covering Mario or the game's timer.
+                     let game = super::layout(
+                         self.extent.width,
+                         self.extent.height,
+@@ -909,48 +912,92 @@ impl VulkanPresenter {
+                     .0
+                     .expect("top-only layout must have a top viewport");
+                     let h = game.height;
+-                    let top = game.y + h * 0.040;
+-                    let gap = h * 0.012;
+-                    let medals_h = h * 0.045;
+-                    let medals_w = medals_h * (108.0 / 43.0);
+-                    let reserve_h = h * 0.110;
+-                    let reserve_w = reserve_h * (164.0 / 166.0);
+-                    let widest = medals_w.max(reserve_w);
+                     let pillar_left = game.x + game.width;
+                     let pillar_width = (self.extent.width as f32 - pillar_left).max(0.0);
+-                    let minimum_margin = h * 0.018;
+-                    let hud_center_x = if pillar_width >= widest + 2.0 * minimum_margin {
++                    let margin = (h * 0.010).max(pillar_width * 0.08);
++                    let medal_gap = h * 0.0045;
++                    let medal_d = h * 0.030;
++                    let medal_row_w = medal_d * 3.0 + medal_gap * 2.0;
++                    let reserve_d = h * 0.060;
++                    let top = game.y + h * 0.040;
++                    let gap = h * 0.011;
++                    let widest = medal_row_w.max(reserve_d);
++                    let hud_center_x = if pillar_width >= widest + 2.0 * margin {
+                         pillar_left + pillar_width / 2.0
+                     } else {
+                         // Exact-16:9 displays have no pillar. Keep the same
+                         // compact stack just inside the game edge as a fallback.
+-                        game.x + game.width - minimum_margin - widest / 2.0
++                        game.x + game.width - h * 0.012 - widest / 2.0
+                     };
+ 
++                    // Draw each medal separately. The native status strip's
++                    // coloured rectangle never enters the final composite.
++                    for (index, source_x) in [101.5f32, 137.5, 173.5].into_iter().enumerate() {
++                        let x = hud_center_x - medal_row_w / 2.0
++                            + index as f32 * (medal_d + medal_gap);
++                        draw_hud(
++                            device,
++                            command_buffer,
++                            Viewport { x, y: top, width: medal_d, height: medal_d },
++                            subcrop(source_x, 0.0, 43.0, 43.0),
++                            3,
++                        );
++                    }
+                     draw_hud(
+                         device,
+                         command_buffer,
+                         Viewport {
+-                            x: hud_center_x - medals_w / 2.0,
+-                            y: top,
+-                            width: medals_w,
+-                            height: medals_h,
++                            x: hud_center_x - reserve_d / 2.0,
++                            y: top + medal_d + gap,
++                            width: reserve_d,
++                            height: reserve_d,
+                         },
+-                        subcrop(105.0, 0.0, 108.0, 43.0),
+-                        3,
++                        // Tight around the live 3D power-up, deliberately inside
++                        // Nintendo's original white/yellow touchscreen ring.
++                        subcrop(121.0, 92.0, 78.0, 78.0),
++                        4,
+                     );
+-                    draw_hud(
+-                        device,
++                }
++            }
++
++            // R3 exposes the real lower touchscreen only outside active course
++            // gameplay. This is a temporary compatibility surface for world
++            // tabs, file-information screens and any other touch-only UI the
++            // original dual-screen game may require.
++            if let Some(viewport) = self.mario_touch_viewport() {
++                if let Some((descriptor, area)) = crop(1) {
++                    let mut constants: Vec<u8> =
++                        area.iter().flat_map(|c| c.to_le_bytes()).collect();
++                    constants.extend_from_slice(&self.filter.mode().to_le_bytes());
++                    set_viewport(device, command_buffer, viewport, self.extent);
++                    device.cmd_bind_pipeline(
+                         command_buffer,
+-                        Viewport {
+-                            x: hud_center_x - reserve_w / 2.0,
+-                            y: top + medals_h + gap,
+-                            width: reserve_w,
+-                            height: reserve_h,
+-                        },
+-                        subcrop(78.0, 49.0, 164.0, 166.0),
+-                        4,
++                        vk::PipelineBindPoint::GRAPHICS,
++                        self.pipeline,
++                    );
++                    device.cmd_bind_descriptor_sets(
++                        command_buffer,
++                        vk::PipelineBindPoint::GRAPHICS,
++                        self.pipeline_layout,
++                        0,
++                        &[descriptor],
++                        &[],
+                     );
++                    device.cmd_push_constants(
++                        command_buffer,
++                        self.pipeline_layout,
++                        vk::ShaderStageFlags::VERTEX,
++                        VERT_CONSTANTS_OFFSET,
++                        &0i32.to_le_bytes(),
++                    );
++                    device.cmd_push_constants(
++                        command_buffer,
++                        self.pipeline_layout,
++                        vk::ShaderStageFlags::FRAGMENT,
++                        FRAG_CONSTANTS_OFFSET,
++                        &constants,
++                    );
++                    device.cmd_draw(command_buffer, 3, 1, 0, 0);
+                 }
+             }
+ 
+@@ -1203,10 +1250,80 @@ impl Presenter for VulkanPresenter {
+ impl VulkanPresenter {
+     pub fn set_mario_course_hud(&mut self, enabled: bool) {
+         self.mario_course_hud = enabled;
++        if enabled {
++            self.mario_touch_overlay = false;
++        }
+     }
+ 
+     pub fn set_mario_pause_overlay(&mut self, enabled: bool) {
+         self.mario_pause_overlay = enabled;
++        if enabled {
++            self.mario_touch_overlay = false;
++        }
++    }
++
++    fn mario_touch_viewport(&self) -> Option<Viewport> {
++        if !self.mario_touch_overlay
++            || self.mario_course_hud
++            || self.mario_pause_overlay
++            || self.arrangement != ScreenLayout::TopOnly
++            || self.orientation != ScreenOrientation::North
++        {
++            return None;
++        }
++        let game = super::layout(
++            self.extent.width,
++            self.extent.height,
++            ScreenLayout::TopOnly,
++            ScreenOrientation::North,
++            self.top_width,
++            false,
++        )
++        .0?;
++        let margin = game.height * 0.025;
++        let height = game.height * 0.40;
++        let width = height * (4.0 / 3.0);
++        Some(Viewport {
++            x: game.x + game.width - width - margin,
++            y: game.y + game.height - height - margin,
++            width,
++            height,
++        })
++    }
++
++    /// Toggles Mario's temporary lower-screen compatibility inset. Active course
++    /// gameplay and the dedicated pause overlay deliberately reject it.
++    pub fn toggle_mario_touch_overlay(&mut self) -> bool {
++        if self.mario_course_hud || self.mario_pause_overlay {
++            self.mario_touch_overlay = false;
++            return false;
++        }
++        self.mario_touch_overlay = !self.mario_touch_overlay;
++        self.mario_touch_overlay
++    }
++
++    /// Maps a point in the whole drawable to lower-LCD pixels when the temporary
++    /// Mario touchscreen inset is visible.
++    pub fn mario_touch_map(&self, x: f32, y: f32) -> Option<(u16, u16)> {
++        if !x.is_finite() || !y.is_finite() {
++            return None;
++        }
++        let viewport = self.mario_touch_viewport()?;
++        let px = x.clamp(0.0, 1.0) * self.extent.width as f32;
++        let py = y.clamp(0.0, 1.0) * self.extent.height as f32;
++        if px < viewport.x
++            || py < viewport.y
++            || px >= viewport.x + viewport.width
++            || py >= viewport.y + viewport.height
++        {
++            return None;
++        }
++        let u = (px - viewport.x) / viewport.width;
++        let v = (py - viewport.y) / viewport.height;
++        Some((
++            (u * 320.0).round().clamp(0.0, 320.0) as u16,
++            (v * 240.0).round().clamp(0.0, 240.0) as u16,
++        ))
+     }
+ }
+ 

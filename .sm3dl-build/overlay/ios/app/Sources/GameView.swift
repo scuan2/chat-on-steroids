@@ -578,12 +578,12 @@ struct GameView: View {
                 // A custom GPU layout fills the whole game-view stage (the
                 // presenter draws the two screens at their user rectangles); the
                 // arrangements keep their fitted box.
-                // The 5x Mario presenter crop is 2133x1200: the nearest
-                // integer-pixel raster to 16:9 at panel-native height. Keep
-                // this as one ViewBuilder-safe initialization expression so
-                // CoreAnimation never introduces horizontal stretch.
+                // Mario owns the whole landscape stage. Its Vulkan presenter
+                // centres the exact 16:9 game picture itself, so the otherwise
+                // black side pillars are part of the drawable and can hold the
+                // compact course HUD without covering Nintendo's own UI.
                 let box: CGSize = isMario3DLand
-                    ? ScreenGeometry.fittedSize(aspect: 2133.0 / 1200.0, in: available)
+                    ? available
                     : (layout == .custom ? available : contentSize(in: available, layout: layout))
                 ZStack {
                     presentedSurface(view: metalView, size: box)
