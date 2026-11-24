@@ -199,9 +199,14 @@ pub struct PresenterHandle {
     /// Last native Mario medal image uploaded through the host overlay.
     mario_medal_generation: u64,
     mario_medal_size: [u32; 2],
+    /// Controller cursor inside Mario's temporary lower-screen modal.
+    mario_touch_cursor: [f32; 2],
+    mario_touch_overlay_textures_ready: bool,
 }
 
 const MARIO_MEDAL_TEXTURE: u64 = 0x534d_3344_4d45_444c; // "SM3DMEDL"
+const MARIO_CURSOR_TEXTURE: u64 = 0x534d_3344_4355_5253; // "SM3DCURS"
+const MARIO_FRAME_TEXTURE: u64 = 0x534d_3344_4652_414d; // "SM3DFRAM"
 
 fn overlay_quad(texture: u64, rect: [f32; 4], clip: [u32; 4]) -> OverlayMesh {
     let [x, y, width, height] = rect;
@@ -217,6 +222,31 @@ fn overlay_quad(texture: u64, rect: [f32; 4], clip: [u32; 4]) -> OverlayMesh {
         ],
         indices: vec![0, 1, 2, 0, 2, 3],
     }
+}
+
+fn mario_cursor_pixels() -> Vec<u8> {
+    const SIZE: usize = 32;
+    let mut pixels = vec![0u8; SIZE * SIZE * 4];
+    let center = (SIZE as f32 - 1.0) * 0.5;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let dx = x as f32 - center;
+            let dy = y as f32 - center;
+            let radius = (dx * dx + dy * dy).sqrt();
+            let cross = (dx.abs() <= 0.75 && dy.abs() <= 6.0)
+                || (dy.abs() <= 0.75 && dx.abs() <= 6.0);
+            let rgba = if (9.0..=11.0).contains(&radius) || cross {
+                [255, 255, 255, 255]
+            } else if (7.5..=12.5).contains(&radius) {
+                [0, 0, 0, 220]
+            } else {
+                [0, 0, 0, 0]
+            };
+            let offset = (y * SIZE + x) * 4;
+            pixels[offset..offset + 4].copy_from_slice(&rgba);
+        }
+    }
+    pixels
 }
 
 /// What presenting a frame of `system` through a presenter will do: the
@@ -357,6 +387,8 @@ pub extern "C" fn zk_presenter_create(
                 logged_mode: false,
                 mario_medal_generation: 0,
                 mario_medal_size: [0, 0],
+                mario_touch_cursor: [0.5, 0.5],
+                mario_touch_overlay_textures_ready: false,
             })) as *mut c_void
         }
         Err(error) => {
@@ -616,6 +648,67 @@ pub extern "C" fn zk_present_layout_size(
     1
 }
 
+/// Toggles Mario's temporary full lower-touchscreen modal. Active course
+/// gameplay and the native pause modal deliberately reject it.
+#[no_mangle]
+pub extern "C" fn zk_presenter_toggle_mario_touch_overlay(presenter: *mut c_void) -> i32 {
+    let Some(presenter) = (unsafe { (presenter as *mut PresenterHandle).as_mut() }) else {
+        return -1;
+    };
+    presenter.presenter.toggle_mario_touch_overlay() as i32
+}
+
+#[no_mangle]
+pub extern "C" fn zk_presenter_mario_touch_overlay_visible(presenter: *mut c_void) -> i32 {
+    let Some(presenter) = (unsafe { (presenter as *mut PresenterHandle).as_ref() }) else {
+        return -1;
+    };
+    presenter.presenter.mario_touch_overlay_visible() as i32
+}
+
+/// Updates the host-only controller cursor in normalised lower-screen space.
+#[no_mangle]
+pub extern "C" fn zk_presenter_set_mario_touch_cursor(
+    presenter: *mut c_void,
+    x: f32,
+    y: f32,
+) -> i32 {
+    let Some(presenter) = (unsafe { (presenter as *mut PresenterHandle).as_mut() }) else {
+        return -1;
+    };
+    if !x.is_finite() || !y.is_finite() {
+        return -1;
+    }
+    presenter.mario_touch_cursor = [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)];
+    0
+}
+
+/// Maps a point in the whole Mario Metal surface to the temporary lower-screen
+/// modal. Returns 1 only while that modal is visible and the point is inside it.
+#[no_mangle]
+pub extern "C" fn zk_present_mario_touch_map(
+    presenter: *mut c_void,
+    x: f32,
+    y: f32,
+    out_x: *mut u16,
+    out_y: *mut u16,
+) -> i32 {
+    if out_x.is_null() || out_y.is_null() {
+        return 0;
+    }
+    let Some(presenter) = (unsafe { (presenter as *mut PresenterHandle).as_ref() }) else {
+        return 0;
+    };
+    let Some((touch_x, touch_y)) = presenter.presenter.mario_touch_map(x, y) else {
+        return 0;
+    };
+    unsafe {
+        *out_x = touch_x;
+        *out_y = touch_y;
+    }
+    1
+}
+
 /// Releases a presenter returned by [`zk_presenter_create`].
 ///
 /// Release the systems loaded with [`zk_create_presented`] first (or at least
@@ -801,6 +894,65 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
                 }
             }
         }
+    }
+
+    if let Some(viewport) = presenter.presenter.mario_touch_viewport() {
+        if !presenter.mario_touch_overlay_textures_ready {
+            overlay.textures.push(OverlayTexture {
+                id: MARIO_CURSOR_TEXTURE,
+                offset: None,
+                size: [32, 32],
+                pixels: mario_cursor_pixels(),
+                linear: true,
+            });
+            overlay.textures.push(OverlayTexture {
+                id: MARIO_FRAME_TEXTURE,
+                offset: None,
+                size: [1, 1],
+                pixels: vec![0, 0, 0, 220],
+                linear: false,
+            });
+            presenter.mario_touch_overlay_textures_ready = true;
+        }
+
+        let clip = [0, 0, presenter.size.0, presenter.size.1];
+        let border = (viewport.height * 0.005).clamp(3.0, 6.0);
+        overlay.meshes.extend([
+            overlay_quad(
+                MARIO_FRAME_TEXTURE,
+                [viewport.x - border, viewport.y - border, viewport.width + border * 2.0, border],
+                clip,
+            ),
+            overlay_quad(
+                MARIO_FRAME_TEXTURE,
+                [viewport.x - border, viewport.y + viewport.height, viewport.width + border * 2.0, border],
+                clip,
+            ),
+            overlay_quad(
+                MARIO_FRAME_TEXTURE,
+                [viewport.x - border, viewport.y, border, viewport.height],
+                clip,
+            ),
+            overlay_quad(
+                MARIO_FRAME_TEXTURE,
+                [viewport.x + viewport.width, viewport.y, border, viewport.height],
+                clip,
+            ),
+        ]);
+
+        let cursor_size = (viewport.height * 0.045).clamp(26.0, 42.0);
+        let cursor_x = viewport.x + viewport.width * presenter.mario_touch_cursor[0];
+        let cursor_y = viewport.y + viewport.height * presenter.mario_touch_cursor[1];
+        overlay.meshes.push(overlay_quad(
+            MARIO_CURSOR_TEXTURE,
+            [
+                cursor_x - cursor_size * 0.5,
+                cursor_y - cursor_size * 0.5,
+                cursor_size,
+                cursor_size,
+            ],
+            clip,
+        ));
     }
 
     if !presenter.logged_mode {

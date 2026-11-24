@@ -354,6 +354,11 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
     private let inputState = InputState()
     /// Hardware controller bridge; created by `startControllerSupport()`.
     private var controllerManager: GameControllerManager?
+    /// Host-only Mario touchscreen-modal state. runtimeQueue only.
+    private var marioRuntimeActive = false
+    private var marioR3WasDown = false
+    private var marioTouchCursorX: Float = 0.5
+    private var marioTouchCursorY: Float = 0.5
 
     /// Audio path: ring buffer + AVAudioEngine, started after a successful load.
     private let audioOutput = AudioOutput()
@@ -1743,6 +1748,36 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         var y: UInt16 = 0
         let normX = Float(min(max(normalisedX, 0), 1))
         let normY = Float(min(max(normalisedY, 0), 1))
+        if currentGame?.titleID == Self.mario3DLandUSA {
+            guard let presenter else {
+                setTouchPoint(x: nil, y: nil)
+                return
+            }
+            // Mario's lower LCD is a host modal rather than part of the normal
+            // TopOnly layout. Ask the presenter that owns its exact geometry,
+            // on the same serial queue that presents frames.
+            runtimeQueue.async { [weak self] in
+                guard let self else { return }
+                guard self.framePresenter == presenter else {
+                    self.inputState.setTouch(x: nil, y: nil)
+                    return
+                }
+                var touchX: UInt16 = 0
+                var touchY: UInt16 = 0
+                if zk_present_mario_touch_map(
+                    presenter,
+                    normX,
+                    normY,
+                    &touchX,
+                    &touchY
+                ) != 0 {
+                    self.inputState.setTouch(x: touchX, y: touchY)
+                } else {
+                    self.inputState.setTouch(x: nil, y: nil)
+                }
+            }
+            return
+        }
         let onLowerScreen: Int32
         if screenLayout == .custom {
             // The GPU custom path turns each screen's picture inside its own
@@ -1791,6 +1826,10 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         // load starts with no applet open and no pause.
         keyboardRequestPending = false
         keyboardPauseState.set(false)
+        marioRuntimeActive = false
+        marioR3WasDown = false
+        marioTouchCursorX = 0.5
+        marioTouchCursorY = 0.5
         if let presenter = framePresenter {
             // The presenter's device and the screens it showed belong to this
             // runtime: stop presenting before the system goes away.
@@ -1895,6 +1934,10 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
             AppLog.log("[3ds2apple] Mario widescreen: host margin %u px/side", accepted)
         }
 
+        marioRuntimeActive = launch.entry.titleID == Self.mario3DLandUSA
+        marioR3WasDown = false
+        marioTouchCursorX = 0.5
+        marioTouchCursorY = 0.5
         system = handle
         framePresenter = usedPresenter
         if presenter != nil, usedPresenter == nil {
@@ -2351,7 +2394,47 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         // button touched on the transparent overlay cannot move the title
         // before the player sees it; the merged input state itself is left
         // alone and is forwarded again from the first revealed frame.
-        let input = warmUpRun == nil ? inputState.snapshot() : InputSnapshot()
+        var input = warmUpRun == nil ? inputState.snapshot() : InputSnapshot()
+        if marioRuntimeActive, let presenter = framePresenter {
+            let r3Down = input.hostR3
+            if r3Down && !marioR3WasDown {
+                _ = zk_presenter_toggle_mario_touch_overlay(presenter)
+            }
+            marioR3WasDown = r3Down
+
+            if zk_presenter_mario_touch_overlay_visible(presenter) == 1 {
+                // The right stick becomes a cursor only while the host modal is
+                // open. This runs in the existing emulation-frame input path;
+                // there is no extra timer or polling loop.
+                let deadzone: Float = 0.16
+                let cursorSpeed: Float = 0.018
+                let moveX = abs(input.cStickX) >= deadzone ? input.cStickX : 0
+                let moveY = abs(input.cStickY) >= deadzone ? input.cStickY : 0
+                marioTouchCursorX = min(max(marioTouchCursorX + moveX * cursorSpeed, 0), 1)
+                marioTouchCursorY = min(max(marioTouchCursorY - moveY * cursorSpeed, 0), 1)
+                _ = zk_presenter_set_mario_touch_cursor(
+                    presenter,
+                    marioTouchCursorX,
+                    marioTouchCursorY
+                )
+
+                let controllerTap = (input.buttons & ZKButton.a) != 0
+                // A real modal: do not let controller navigation leak into the
+                // top-screen map while the lower touchscreen is being operated.
+                input.buttons = 0
+                input.circleX = 0
+                input.circleY = 0
+                input.cStickX = 0
+                input.cStickY = 0
+                if !input.touch, controllerTap {
+                    input.touch = true
+                    input.touchX = UInt16((marioTouchCursorX * 319).rounded())
+                    input.touchY = UInt16((marioTouchCursorY * 239).rounded())
+                }
+            }
+        } else {
+            marioR3WasDown = input.hostR3
+        }
 
         // Fast-forward: advance the console-only frames first. They produce no
         // visible frame and no audible samples.

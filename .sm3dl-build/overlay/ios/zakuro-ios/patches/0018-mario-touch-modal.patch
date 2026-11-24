@@ -1,0 +1,178 @@
+diff --git a/crates/zakuro-gpu/src/backend/vulkan.rs b/crates/zakuro-gpu/src/backend/vulkan.rs
+index 951e0ec..5e9c01f 100644
+--- a/crates/zakuro-gpu/src/backend/vulkan.rs
++++ b/crates/zakuro-gpu/src/backend/vulkan.rs
+@@ -143,6 +143,9 @@ pub struct VulkanPresenter {
+     /// Whether the most recent title frame contains Mario's lower-screen pause
+     /// UI; this is drawn only while paused, never as a permanent second screen.
+     mario_pause_overlay: bool,
++    /// User-requested access to Mario's original lower touchscreen while
++    /// outside active course gameplay.
++    mario_touch_overlay: bool,
+     /// set when the swapchain no longer matches the window
+     stale: bool,
+ }
+@@ -431,6 +434,7 @@ impl VulkanPresenter {
+             stereo: Stereo::default(),
+             mario_course_hud: false,
+             mario_pause_overlay: false,
++            mario_touch_overlay: false,
+             stale: false,
+         };
+ 
+@@ -936,6 +940,47 @@ impl VulkanPresenter {
+                 }
+             }
+ 
++            // R3 compatibility surface: the complete original lower LCD,
++            // upright and centred. This is intentionally a modal rather than a
++            // tiny picture-in-picture crop so world tabs and other touch-only
++            // controls remain readable and usable.
++            if let Some(viewport) = self.mario_touch_viewport() {
++                if let Some((descriptor, area)) = crop(1) {
++                    let mut constants: Vec<u8> =
++                        area.iter().flat_map(|c| c.to_le_bytes()).collect();
++                    constants.extend_from_slice(&self.filter.mode().to_le_bytes());
++                    set_viewport(device, command_buffer, viewport, self.extent);
++                    device.cmd_bind_pipeline(
++                        command_buffer,
++                        vk::PipelineBindPoint::GRAPHICS,
++                        self.pipeline,
++                    );
++                    device.cmd_bind_descriptor_sets(
++                        command_buffer,
++                        vk::PipelineBindPoint::GRAPHICS,
++                        self.pipeline_layout,
++                        0,
++                        &[descriptor],
++                        &[],
++                    );
++                    device.cmd_push_constants(
++                        command_buffer,
++                        self.pipeline_layout,
++                        vk::ShaderStageFlags::VERTEX,
++                        VERT_CONSTANTS_OFFSET,
++                        &0i32.to_le_bytes(),
++                    );
++                    device.cmd_push_constants(
++                        command_buffer,
++                        self.pipeline_layout,
++                        vk::ShaderStageFlags::FRAGMENT,
++                        FRAG_CONSTANTS_OFFSET,
++                        &constants,
++                    );
++                    device.cmd_draw(command_buffer, 3, 1, 0, 0);
++                }
++            }
++
+             // The permanent lower screen is intentionally hidden in the
+             // dedicated Mario layout, but the game's in-course pause menu
+             // genuinely lives there. Show that original 4:3 screen only while
+@@ -945,25 +990,9 @@ impl VulkanPresenter {
+                 && self.arrangement == ScreenLayout::TopOnly
+                 && self.orientation == ScreenOrientation::North
+             {
+-                if let Some((descriptor, area)) = crop(1) {
+-                    let game = super::layout(
+-                        self.extent.width,
+-                        self.extent.height,
+-                        ScreenLayout::TopOnly,
+-                        ScreenOrientation::North,
+-                        self.top_width,
+-                        false,
+-                    )
+-                    .0
+-                    .expect("top-only layout must have a top viewport");
+-                    let height = game.height * 0.62;
+-                    let width = height * (4.0 / 3.0);
+-                    let viewport = Viewport {
+-                        x: game.x + (game.width - width) * 0.5,
+-                        y: game.y + (game.height - height) * 0.5,
+-                        width,
+-                        height,
+-                    };
++                if let (Some((descriptor, area)), Some(viewport)) =
++                    (crop(1), self.mario_modal_viewport())
++                {
+                     let mut constants: Vec<u8> =
+                         area.iter().flat_map(|c| c.to_le_bytes()).collect();
+                     constants.extend_from_slice(&self.filter.mode().to_le_bytes());
+@@ -1185,10 +1214,78 @@ impl Presenter for VulkanPresenter {
+ impl VulkanPresenter {
+     pub fn set_mario_course_hud(&mut self, enabled: bool) {
+         self.mario_course_hud = enabled;
++        if enabled {
++            self.mario_touch_overlay = false;
++        }
+     }
+ 
+     pub fn set_mario_pause_overlay(&mut self, enabled: bool) {
+         self.mario_pause_overlay = enabled;
++        if enabled {
++            self.mario_touch_overlay = false;
++        }
++    }
++
++    fn mario_modal_viewport(&self) -> Option<Viewport> {
++        if self.arrangement != ScreenLayout::TopOnly || self.orientation != ScreenOrientation::North {
++            return None;
++        }
++        let game = super::layout(
++            self.extent.width,
++            self.extent.height,
++            ScreenLayout::TopOnly,
++            ScreenOrientation::North,
++            self.top_width,
++            false,
++        )
++        .0?;
++        let height = game.height * 0.70;
++        let width = height * (4.0 / 3.0);
++        Some(Viewport {
++            x: game.x + (game.width - width) * 0.5,
++            y: game.y + (game.height - height) * 0.5,
++            width,
++            height,
++        })
++    }
++
++    pub fn toggle_mario_touch_overlay(&mut self) -> bool {
++        if self.mario_course_hud || self.mario_pause_overlay {
++            self.mario_touch_overlay = false;
++            return false;
++        }
++        self.mario_touch_overlay = !self.mario_touch_overlay;
++        self.mario_touch_overlay
++    }
++
++    pub fn mario_touch_overlay_visible(&self) -> bool {
++        self.mario_touch_overlay && !self.mario_course_hud && !self.mario_pause_overlay
++    }
++
++    pub fn mario_touch_viewport(&self) -> Option<Viewport> {
++        self.mario_touch_overlay_visible().then(|| self.mario_modal_viewport()).flatten()
++    }
++
++    pub fn mario_touch_map(&self, x: f32, y: f32) -> Option<(u16, u16)> {
++        if !x.is_finite() || !y.is_finite() {
++            return None;
++        }
++        let viewport = self.mario_touch_viewport()?;
++        let px = x.clamp(0.0, 1.0) * self.extent.width as f32;
++        let py = y.clamp(0.0, 1.0) * self.extent.height as f32;
++        if px < viewport.x
++            || py < viewport.y
++            || px >= viewport.x + viewport.width
++            || py >= viewport.y + viewport.height
++        {
++            return None;
++        }
++        let u = (px - viewport.x) / viewport.width;
++        let v = (py - viewport.y) / viewport.height;
++        Some((
++            (u * 319.0).round().clamp(0.0, 319.0) as u16,
++            (v * 239.0).round().clamp(0.0, 239.0) as u16,
++        ))
+     }
+ }
+ 
