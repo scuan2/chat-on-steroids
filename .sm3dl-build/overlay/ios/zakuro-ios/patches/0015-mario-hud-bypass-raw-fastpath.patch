@@ -1,0 +1,35 @@
+diff --git a/crates/zakuro-gpu/src/raster.rs b/crates/zakuro-gpu/src/raster.rs
+index 5c742c9..906cb27 100644
+--- a/crates/zakuro-gpu/src/raster.rs
++++ b/crates/zakuro-gpu/src/raster.rs
+@@ -895,6 +895,18 @@ fn mario_course_ui_draw(
+     MarioCourseUiDraw::default()
+ }
+ 
++/// The working PC port observes Mario's lower-screen UI before renderer-specific
++/// transforms. On iOS, Vulkan can otherwise send these tiny draws through the
++/// raw host-shader path, which bypasses `mario_course_ui_draw` entirely. Keep
++/// only this narrow class of draws on the decoded path so the existing strict
++/// classifier gets the native shaded vertices.
++fn mario_course_ui_candidate(registers: &[u32], vertex_count: u32) -> bool {
++    (3..=48).contains(&vertex_count)
++        && registers[REG_BLEND_FUNC] == 0x7676_0000
++        && (read_float24(registers, REG_VIEWPORT_WIDTH) - 120.0).abs() < 0.5
++        && (read_float24(registers, REG_VIEWPORT_HEIGHT) - 160.0).abs() < 0.5
++}
++
+ /// Super Mario 3D Land's cutscenes draw two 400x20 black matte quads over the
+ /// already-widened top screen.  The PC port identifies and omits exactly this
+ /// draw in 16:9; do the same here instead of stretching the matte into the host
+@@ -3317,7 +3329,10 @@ pub fn draw<M: GpuMemory>(
+     );
+     // the GPU decodes the arrays itself when it shades the draw, from the first vertex the draw uses to the last
+     #[cfg(feature = "vulkan")]
+-    if resources.hardware.as_ref().is_some_and(|hardware| hardware.shades()) && registers[REG_GEOSTAGE_CONFIG] & 0x3 != 2 {
++    if resources.hardware.as_ref().is_some_and(|hardware| hardware.shades())
++        && registers[REG_GEOSTAGE_CONFIG] & 0x3 != 2
++        && !mario_course_ui_candidate(registers, vertex_count)
++    {
+         let index_short = registers[REG_INDEX_ARRAY] & 0x8000_0000 != 0;
+         let first_vertex = registers[REG_VERTEX_OFFSET];
+         let (first, span) = if indexed {
