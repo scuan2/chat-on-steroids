@@ -860,9 +860,15 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
         {
             let pillar_left = game.x + game.width;
             let pillar_width = (presenter.size.0 as f32 - pillar_left).max(0.0);
-            let reserve_box = (game.height * 0.070).min(pillar_width * 0.44);
-            let medal_width_limit = (game.height * 0.042).min(pillar_width * 0.22);
-            let medal_height_limit = game.height * 0.17;
+            // Keep the native artwork comfortably legible at the iPhone's
+            // drawable resolution. The reserve model is naturally wide, so
+            // constrain its width and height independently rather than
+            // forcing it into a square slot; the three medals form a taller,
+            // narrower column beneath it.
+            let reserve_width_limit = (game.height * 0.110).min(pillar_width * 0.72);
+            let reserve_height_limit = game.height * 0.110;
+            let medal_width_limit = (game.height * 0.063).min(pillar_width * 0.52);
+            let medal_height_limit = game.height * 0.200;
             let reserve_size = reserve
                 .filter(|(_, [w, h], _)| *w > 0 && *h > 0)
                 .map(|(_, [w, h], _)| (w as f32, h as f32));
@@ -871,7 +877,7 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
                 .map(|(_, [w, h], _)| (w as f32, h as f32));
 
             let reserve_scale = reserve_size.map_or(0.0, |(w, h)| {
-                (reserve_box / w).min(reserve_box / h)
+                (reserve_width_limit / w).min(reserve_height_limit / h)
             });
             let reserve_draw = reserve_size.map_or((0.0, 0.0), |(w, h)| {
                 (w * reserve_scale, h * reserve_scale)
@@ -884,18 +890,13 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
             });
             let has_reserve = reserve_draw.0 >= 8.0 && reserve_draw.1 >= 8.0;
             let has_medals = medal_draw.0 >= 8.0 && medal_draw.1 >= 8.0;
-            let gap = if has_reserve && has_medals { game.height * 0.010 } else { 0.0 };
-            let stack_height = (if has_reserve { reserve_box } else { 0.0 })
-                + gap
-                + if has_medals { medal_draw.1 } else { 0.0 };
-            let top = game.y + (game.height - stack_height).max(0.0) * 0.5;
-            let minimum_margin = game.height * 0.012;
+            let gap = if has_reserve && has_medals { game.height * 0.020 } else { 0.0 };
+            // This is a compact top-right HUD, not a second screen or a
+            // floating centre-screen widget. Both native elements share one
+            // centre line and start at the same top inset.
+            let top = game.y + game.height * 0.040;
             let widest = reserve_draw.0.max(medal_draw.0);
-            let hud_center_x = if pillar_width >= widest + 2.0 * minimum_margin {
-                pillar_left + pillar_width / 2.0
-            } else {
-                game.x + game.width - minimum_margin - widest / 2.0
-            };
+            let hud_center_x = pillar_left + pillar_width / 2.0;
             let clip = [0, 0, presenter.size.0, presenter.size.1];
 
             // Reserve power-up first, then the three original medals vertically.
@@ -904,7 +905,7 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
                     MARIO_RESERVE_TEXTURE,
                     [
                         hud_center_x - reserve_draw.0 / 2.0,
-                        top + (reserve_box - reserve_draw.1) / 2.0,
+                        top,
                         reserve_draw.0,
                         reserve_draw.1,
                     ],
@@ -916,7 +917,7 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
                     MARIO_MEDAL_TEXTURE,
                     [
                         hud_center_x - medal_draw.0 / 2.0,
-                        top + if has_reserve { reserve_box + gap } else { 0.0 },
+                        top + if has_reserve { reserve_draw.1 + gap } else { 0.0 },
                         medal_draw.0,
                         medal_draw.1,
                     ],
