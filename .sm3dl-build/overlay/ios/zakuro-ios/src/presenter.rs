@@ -196,12 +196,10 @@ pub struct PresenterHandle {
     size: (u32, u32),
     /// Whether the first presented frame already logged which path it took.
     logged_mode: bool,
-    /// Controller cursor inside Mario's temporary lower-screen modal.
-    mario_touch_cursor: [f32; 2],
-    mario_touch_overlay_textures_ready: bool,
+    /// Whether the temporary lower-screen inset frame texture is uploaded.
+    mario_touch_overlay_frame_ready: bool,
 }
 
-const MARIO_CURSOR_TEXTURE: u64 = 0x534d_3344_4355_5253; // "SM3DCURS"
 const MARIO_FRAME_TEXTURE: u64 = 0x534d_3344_4652_414d; // "SM3DFRAM"
 
 fn overlay_quad(texture: u64, rect: [f32; 4], clip: [u32; 4]) -> OverlayMesh {
@@ -218,31 +216,6 @@ fn overlay_quad(texture: u64, rect: [f32; 4], clip: [u32; 4]) -> OverlayMesh {
         ],
         indices: vec![0, 1, 2, 0, 2, 3],
     }
-}
-
-fn mario_cursor_pixels() -> Vec<u8> {
-    const SIZE: usize = 32;
-    let mut pixels = vec![0u8; SIZE * SIZE * 4];
-    let center = (SIZE as f32 - 1.0) * 0.5;
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let dx = x as f32 - center;
-            let dy = y as f32 - center;
-            let radius = (dx * dx + dy * dy).sqrt();
-            let cross = (dx.abs() <= 0.75 && dy.abs() <= 6.0)
-                || (dy.abs() <= 0.75 && dx.abs() <= 6.0);
-            let rgba = if (9.0..=11.0).contains(&radius) || cross {
-                [255, 255, 255, 255]
-            } else if (7.5..=12.5).contains(&radius) {
-                [0, 0, 0, 220]
-            } else {
-                [0, 0, 0, 0]
-            };
-            let offset = (y * SIZE + x) * 4;
-            pixels[offset..offset + 4].copy_from_slice(&rgba);
-        }
-    }
-    pixels
 }
 
 /// What presenting a frame of `system` through a presenter will do: the
@@ -381,8 +354,7 @@ pub extern "C" fn zk_presenter_create(
                 presenter,
                 size: (width, height),
                 logged_mode: false,
-                mario_touch_cursor: [0.5, 0.5],
-                mario_touch_overlay_textures_ready: false,
+                mario_touch_overlay_frame_ready: false,
             })) as *mut c_void
         }
         Err(error) => {
@@ -642,8 +614,8 @@ pub extern "C" fn zk_present_layout_size(
     1
 }
 
-/// Toggles Mario's temporary full lower-touchscreen modal. Active course
-/// gameplay and the native pause modal deliberately reject it.
+/// Toggles Mario's temporary lower-screen inset. Active course gameplay and
+/// the native pause UI deliberately hide it.
 #[no_mangle]
 pub extern "C" fn zk_presenter_toggle_mario_touch_overlay(presenter: *mut c_void) -> i32 {
     let Some(presenter) = (unsafe { (presenter as *mut PresenterHandle).as_mut() }) else {
@@ -652,33 +624,8 @@ pub extern "C" fn zk_presenter_toggle_mario_touch_overlay(presenter: *mut c_void
     presenter.presenter.toggle_mario_touch_overlay() as i32
 }
 
-#[no_mangle]
-pub extern "C" fn zk_presenter_mario_touch_overlay_visible(presenter: *mut c_void) -> i32 {
-    let Some(presenter) = (unsafe { (presenter as *mut PresenterHandle).as_ref() }) else {
-        return -1;
-    };
-    presenter.presenter.mario_touch_overlay_visible() as i32
-}
-
-/// Updates the host-only controller cursor in normalised lower-screen space.
-#[no_mangle]
-pub extern "C" fn zk_presenter_set_mario_touch_cursor(
-    presenter: *mut c_void,
-    x: f32,
-    y: f32,
-) -> i32 {
-    let Some(presenter) = (unsafe { (presenter as *mut PresenterHandle).as_mut() }) else {
-        return -1;
-    };
-    if !x.is_finite() || !y.is_finite() {
-        return -1;
-    }
-    presenter.mario_touch_cursor = [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)];
-    0
-}
-
 /// Maps a point in the whole Mario Metal surface to the temporary lower-screen
-/// modal. Returns 1 only while that modal is visible and the point is inside it.
+/// inset. Returns 1 only while the inset is visible and the point is inside it.
 #[no_mangle]
 pub extern "C" fn zk_present_mario_touch_map(
     presenter: *mut c_void,
@@ -844,14 +791,7 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
     presenter.presenter.set_mario_medal_state(system.mario_medal_state());
 
     if let Some(viewport) = presenter.presenter.mario_touch_viewport() {
-        if !presenter.mario_touch_overlay_textures_ready {
-            overlay.textures.push(OverlayTexture {
-                id: MARIO_CURSOR_TEXTURE,
-                offset: None,
-                size: [32, 32],
-                pixels: mario_cursor_pixels(),
-                linear: true,
-            });
+        if !presenter.mario_touch_overlay_frame_ready {
             overlay.textures.push(OverlayTexture {
                 id: MARIO_FRAME_TEXTURE,
                 offset: None,
@@ -859,7 +799,7 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
                 pixels: vec![0, 0, 0, 220],
                 linear: false,
             });
-            presenter.mario_touch_overlay_textures_ready = true;
+            presenter.mario_touch_overlay_frame_ready = true;
         }
 
         let clip = [0, 0, presenter.size.0, presenter.size.1];
@@ -886,20 +826,6 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
                 clip,
             ),
         ]);
-
-        let cursor_size = (viewport.height * 0.045).clamp(26.0, 42.0);
-        let cursor_x = viewport.x + viewport.width * presenter.mario_touch_cursor[0];
-        let cursor_y = viewport.y + viewport.height * presenter.mario_touch_cursor[1];
-        overlay.meshes.push(overlay_quad(
-            MARIO_CURSOR_TEXTURE,
-            [
-                cursor_x - cursor_size * 0.5,
-                cursor_y - cursor_size * 0.5,
-                cursor_size,
-                cursor_size,
-            ],
-            clip,
-        ));
     }
 
     if !presenter.logged_mode {

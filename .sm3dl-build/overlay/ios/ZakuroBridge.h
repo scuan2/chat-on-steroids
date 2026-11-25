@@ -549,19 +549,12 @@ int32_t zk_presenter_set_orientation(zk_presenter_t presenter, uint32_t orientat
 int32_t zk_present_layout_size(uint32_t layout, uint32_t orientation,
                                uint32_t *out_width, uint32_t *out_height);
 
-/** Toggle Mario's temporary full lower-touchscreen modal. */
+/** Toggle Mario's temporary lower-screen inset. */
 int32_t zk_presenter_toggle_mario_touch_overlay(zk_presenter_t presenter);
-
-/** 1 while Mario's temporary lower-touchscreen modal is visible, 0 otherwise. */
-int32_t zk_presenter_mario_touch_overlay_visible(zk_presenter_t presenter);
-
-/** Set the host-only cursor in normalised lower-screen coordinates. */
-int32_t zk_presenter_set_mario_touch_cursor(zk_presenter_t presenter,
-                                            float x, float y);
 
 /**
  * Map a point in the whole Mario Metal surface to the temporary lower-screen
- * modal. Returns 1 only while the modal is visible and the point is inside it.
+ * inset. Returns 1 only while the inset is visible and the point is inside it.
  */
 int32_t zk_present_mario_touch_map(zk_presenter_t presenter,
                                    float x, float y,

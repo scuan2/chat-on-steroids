@@ -354,11 +354,9 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
     private let inputState = InputState()
     /// Hardware controller bridge; created by `startControllerSupport()`.
     private var controllerManager: GameControllerManager?
-    /// Host-only Mario touchscreen-modal state. runtimeQueue only.
+    /// Host-only Mario R3 lower-screen inset state. runtimeQueue only.
     private var marioRuntimeActive = false
     private var marioR3WasDown = false
-    private var marioTouchCursorX: Float = 0.5
-    private var marioTouchCursorY: Float = 0.5
 
     /// Audio path: ring buffer + AVAudioEngine, started after a successful load.
     private let audioOutput = AudioOutput()
@@ -1828,8 +1826,6 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         keyboardPauseState.set(false)
         marioRuntimeActive = false
         marioR3WasDown = false
-        marioTouchCursorX = 0.5
-        marioTouchCursorY = 0.5
         if let presenter = framePresenter {
             // The presenter's device and the screens it showed belong to this
             // runtime: stop presenting before the system goes away.
@@ -1936,8 +1932,6 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
 
         marioRuntimeActive = launch.entry.titleID == Self.mario3DLandUSA
         marioR3WasDown = false
-        marioTouchCursorX = 0.5
-        marioTouchCursorY = 0.5
         system = handle
         framePresenter = usedPresenter
         if presenter != nil, usedPresenter == nil {
@@ -2402,36 +2396,10 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
             }
             marioR3WasDown = r3Down
 
-            if zk_presenter_mario_touch_overlay_visible(presenter) == 1 {
-                // The right stick becomes a cursor only while the host modal is
-                // open. This runs in the existing emulation-frame input path;
-                // there is no extra timer or polling loop.
-                let deadzone: Float = 0.16
-                let cursorSpeed: Float = 0.018
-                let moveX = abs(input.cStickX) >= deadzone ? input.cStickX : 0
-                let moveY = abs(input.cStickY) >= deadzone ? input.cStickY : 0
-                marioTouchCursorX = min(max(marioTouchCursorX + moveX * cursorSpeed, 0), 1)
-                marioTouchCursorY = min(max(marioTouchCursorY - moveY * cursorSpeed, 0), 1)
-                _ = zk_presenter_set_mario_touch_cursor(
-                    presenter,
-                    marioTouchCursorX,
-                    marioTouchCursorY
-                )
-
-                let controllerTap = (input.buttons & ZKButton.a) != 0
-                // A real modal: do not let controller navigation leak into the
-                // top-screen map while the lower touchscreen is being operated.
-                input.buttons = 0
-                input.circleX = 0
-                input.circleY = 0
-                input.cStickX = 0
-                input.cStickY = 0
-                if !input.touch, controllerTap {
-                    input.touch = true
-                    input.touchX = UInt16((marioTouchCursorX * 319).rounded())
-                    input.touchY = UInt16((marioTouchCursorY * 239).rounded())
-                }
-            }
+            // The lower screen is a visual inset, not a controller-operated
+            // mouse modal. Leave Circle Pad, C-stick, D-pad and face buttons
+            // untouched so the game's native course/world-map navigation works.
+            // A real finger tap on the inset is still mapped to touchscreen input.
         } else {
             marioR3WasDown = input.hostR3
         }

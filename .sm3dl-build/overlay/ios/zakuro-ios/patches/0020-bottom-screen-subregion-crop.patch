@@ -1,0 +1,45 @@
+diff --git a/crates/zakuro-gpu/src/raster/hardware.rs b/crates/zakuro-gpu/src/raster/hardware.rs
+index cd46236..207428f 100644
+--- a/crates/zakuro-gpu/src/raster/hardware.rs
++++ b/crates/zakuro-gpu/src/raster/hardware.rs
+@@ -5105,7 +5105,13 @@ impl Hardware {
+         let native_width = rows * scale;
+         let native_height = row_pixels * scale;
+         let (width, height) = (upright_width, upright_height);
+-        let (area, bounds, shown_width) = if (width, height) != (native_width, native_height) {
++        // The lower LCD is a 320-row subregion of this same 240x400 target.
++        // Only the full-surface top LCD should receive the host 16:9 crop.
++        let (area, bounds, shown_width, shown_height) = if (width, height) != (native_width, native_height)
++            && first == 0
++            && count == rows
++            && screen.columns == row_pixels
++        {
+             // Mario's 16:9 path renders a slightly wider host image (428x240
+             // logical at 1x, matching the PC recomp), then presents an exact
+             // 16:9 center crop. Keeping the extra pixels in the render target
+@@ -5124,6 +5130,7 @@ impl Hardware {
+                     (h - 0.5) / h,
+                 ],
+                 shown,
++                height,
+             )
+         } else {
+             let (width_f, height_f) = (width as f32, height as f32);
+@@ -5132,7 +5139,8 @@ impl Hardware {
+             (
+                 [left / width_f, top / height_f, (right - left) / width_f, (bottom - top) / height_f],
+                 [(left + 0.5) / width_f, (top + 0.5) / height_f, (right - 0.5) / width_f, (bottom - 0.5) / height_f],
+-                width,
++                count * scale,
++                screen.columns * scale,
+             )
+         };
+         Ok(Some(crate::GpuScreen {
+@@ -5140,6 +5148,6 @@ impl Hardware {
+             area,
+             bounds,
+             width: shown_width,
+-            height,
++            height: shown_height,
+         }))
+     }
