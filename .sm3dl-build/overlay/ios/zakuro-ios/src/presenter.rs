@@ -843,7 +843,7 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
                         game.x + game.width - minimum_margin - widest / 2.0
                     };
                     let width = medals_w;
-                    if width >= 8.0 {
+                    if reserve_d >= 8.0 && medals_w >= 8.0 {
                         let height = medals_h;
                         let x = hud_center_x - width / 2.0;
                         let y = top;

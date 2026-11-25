@@ -2,8 +2,7 @@ diff --git a/crates/zakuro-core/src/lib.rs b/crates/zakuro-core/src/lib.rs
 index a6de0e4..0308042 100644
 --- a/crates/zakuro-core/src/lib.rs
 +++ b/crates/zakuro-core/src/lib.rs
-@@ -1233,6 +1233,12 @@ impl System {
-         self.gpu.mario_pause_active()
+@@ -1234,4 +1234,10 @@ impl System {
      }
  
 +    /// The last completed Mario course frame's native Star Medal strip,
@@ -14,13 +13,11 @@ index a6de0e4..0308042 100644
 +
      /// the top screen's right eye picture on the host GPU, like gpu_screen gives the left, when the title draws in 3D
      pub fn gpu_right_eye(&mut self) -> Option<zakuro_gpu::GpuScreen> {
-         if !self.draws_in_3d() {
 diff --git a/crates/zakuro-gpu/src/backend/vulkan.rs b/crates/zakuro-gpu/src/backend/vulkan.rs
-index 53e2514..951e0ec 100644
+index 53e2514..bd9e107 100644
 --- a/crates/zakuro-gpu/src/backend/vulkan.rs
 +++ b/crates/zakuro-gpu/src/backend/vulkan.rs
-@@ -829,8 +829,9 @@ impl VulkanPresenter {
-             }
+@@ -830,6 +830,7 @@ impl VulkanPresenter {
  
              // Super Mario 3D Land's dedicated wide presentation has no lower
 -            // screen on the display. Reuse its live lower-screen GPU image only
@@ -30,9 +27,7 @@ index 53e2514..951e0ec 100644
 +            // needs a small crop from the completed lower LCD.
              if self.mario_course_hud
                  && self.arrangement == ScreenLayout::TopOnly
-                 && self.orientation == ScreenOrientation::North
-@@ -894,10 +895,9 @@ impl VulkanPresenter {
-                     };
+@@ -895,8 +896,7 @@ impl VulkanPresenter {
  
                      // The dedicated iPhone presentation is exact 16:9 centered
 -                    // in a wider landscape surface. On the Kishi, landscape-left
@@ -44,9 +39,7 @@ index 53e2514..951e0ec 100644
 +                    // Dynamic Island on the opposite side.
                      let game = super::layout(
                          self.extent.width,
-                         self.extent.height,
-@@ -909,46 +909,34 @@ impl VulkanPresenter {
-                     .0
+@@ -910,46 +910,38 @@ impl VulkanPresenter {
                      .expect("top-only layout must have a top viewport");
                      let h = game.height;
 -                    let top = game.y + h * 0.040;
@@ -59,7 +52,8 @@ index 53e2514..951e0ec 100644
                      let pillar_left = game.x + game.width;
                      let pillar_width = (self.extent.width as f32 - pillar_left).max(0.0);
 -                    let minimum_margin = h * 0.018;
--                    let hud_center_x = if pillar_width >= widest + 2.0 * minimum_margin {
++                    // Reserve item and native medal strip share one centered stack
++                    // in the black pillar; the host draws the captured medal strip.
 +                    let reserve_d = (h * 0.32).min(pillar_width * 0.80);
 +                    let medals_w = (h * 0.36).min(pillar_width * 0.90);
 +                    let medals_h = medals_w * (43.0 / 108.0);
@@ -67,25 +61,24 @@ index 53e2514..951e0ec 100644
 +                    let stack_h = medals_h + gap + reserve_d;
 +                    let top = game.y + (h - stack_h).max(0.0) * 0.5;
 +                    let minimum_margin = h * 0.012;
-+                    let hud_center_x = if pillar_width >= reserve_d.max(medals_w) + 2.0 * minimum_margin {
++                    let widest = reserve_d.max(medals_w);
+                     let hud_center_x = if pillar_width >= widest + 2.0 * minimum_margin {
                          pillar_left + pillar_width / 2.0
                      } else {
-+                        game.x + game.width - minimum_margin - reserve_d.max(medals_w) / 2.0
+-                        // Exact-16:9 displays have no pillar. Keep the same
+-                        // compact stack just inside the game edge as a fallback.
+                         game.x + game.width - minimum_margin - widest / 2.0
                      };
  
-                     draw_hud(
-                         device,
-                         command_buffer,
-                         Viewport {
+-                    draw_hud(
+-                        device,
+-                        command_buffer,
+-                        Viewport {
 -                            x: hud_center_x - medals_w / 2.0,
 -                            y: top,
 -                            width: medals_w,
 -                            height: medals_h,
-+                            x: hud_center_x - reserve_d / 2.0,
-+                            y: top + medals_h + gap,
-+                            width: reserve_d,
-+                            height: reserve_d,
-                         },
+-                        },
 -                        subcrop(105.0, 0.0, 108.0, 43.0),
 -                        3,
 -                    );
@@ -99,18 +92,31 @@ index 53e2514..951e0ec 100644
 -                            height: reserve_h,
 -                        },
 -                        subcrop(78.0, 49.0, 164.0, 166.0),
-+                        // Centre (160,131), radius 48: this sits wholly inside
-+                        // Nintendo's original white/yellow touchscreen ring.
-+                        subcrop(112.0, 83.0, 96.0, 96.0),
-                         4,
-                     );
+-                        4,
+-                    );
++                    if reserve_d >= 8.0 && medals_w >= 8.0 {
++                        draw_hud(
++                            device,
++                            command_buffer,
++                            Viewport {
++                                x: hud_center_x - reserve_d / 2.0,
++                                y: top + medals_h + gap,
++                                width: reserve_d,
++                                height: reserve_d,
++                            },
++                            // Centre (160,131), radius 48: this sits wholly inside
++                            // Nintendo's original white/yellow touchscreen ring.
++                            subcrop(112.0, 83.0, 96.0, 96.0),
++                            4,
++                        );
++                    }
                  }
+             }
 diff --git a/crates/zakuro-gpu/src/lib.rs b/crates/zakuro-gpu/src/lib.rs
 index f7521cd..a2e277a 100644
 --- a/crates/zakuro-gpu/src/lib.rs
 +++ b/crates/zakuro-gpu/src/lib.rs
-@@ -754,6 +754,13 @@ impl Gpu {
-         self.resources.mario_pause_active()
+@@ -755,4 +755,11 @@ impl Gpu {
      }
  
 +    /// The last completed Mario course frame's Star Medal strip, replayed from
@@ -122,13 +128,11 @@ index f7521cd..a2e277a 100644
 +
      /// where the picture between a screen's picture and the one b4 is, like screen_image has the screen's, none when there's none
      pub fn between_image(&mut self, screen: ScreenRef) -> Option<GpuScreen> {
-         #[cfg(feature = "vulkan")]
 diff --git a/crates/zakuro-gpu/src/raster.rs b/crates/zakuro-gpu/src/raster.rs
 index 906cb27..21ba6b5 100644
 --- a/crates/zakuro-gpu/src/raster.rs
 +++ b/crates/zakuro-gpu/src/raster.rs
-@@ -2013,6 +2013,16 @@ pub struct Resources {
-     mario_pause_dialog: bool,
+@@ -2014,4 +2014,14 @@ pub struct Resources {
      /// Whether the last completed title frame contained the in-course pause UI.
      mario_pause_active: bool,
 +    /// Transparent software replay target for Mario's native Star Medal draws.
@@ -143,9 +147,7 @@ index 906cb27..21ba6b5 100644
 +    mario_medal_generation: u64,
  }
  
- impl Resources {
-@@ -2020,6 +2030,22 @@ impl Resources {
-         self.mario_hud_active = self.mario_hud_parts & MARIO_HUD_ALL == MARIO_HUD_ALL;
+@@ -2021,4 +2031,20 @@ impl Resources {
          self.mario_pause_active =
              self.mario_pause_rows == 7 || (self.mario_pause_active && self.mario_pause_dialog);
 +        if self.mario_hud_active {
@@ -166,9 +168,7 @@ index 906cb27..21ba6b5 100644
 +        self.mario_medal_bounds = None;
          self.mario_hud_parts = 0;
          self.mario_pause_rows = 0;
-         self.mario_pause_dialog = false;
-@@ -2033,6 +2059,18 @@ impl Resources {
-         self.mario_pause_active
+@@ -2034,4 +2060,16 @@ impl Resources {
      }
  
 +    pub(crate) fn mario_medal_image(&self) -> Option<(&[u8], [u32; 2], u64)> {
@@ -185,9 +185,7 @@ index 906cb27..21ba6b5 100644
 +
      /// do draws hand their vertex work to other threads (see Gpu::scout), on the host's GPU while the CPU shades
      pub(crate) fn hands_out(&self) -> bool {
-         #[cfg(feature = "vulkan")]
-@@ -2953,6 +2991,148 @@ impl DrawState<'_> {
-     }
+@@ -2954,4 +2992,146 @@ impl DrawState<'_> {
  }
  
 +/// Replays one of Mario's native Star Medal draws into a transparent software
@@ -334,17 +332,13 @@ index 906cb27..21ba6b5 100644
 +
  /// rasterizes one triangle, texturing and the combiners, then the alpha,
  /// stencil and depth tests in the order the hardware runs them, then blending and the color write
- fn fill_triangle(
-@@ -3704,6 +3884,7 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
-                 Vertices::Shaded(_) | Vertices::Prepared(_) => {}
+@@ -3705,4 +3885,5 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
              }
          }
 +        let mario_ui_candidate = mario_lower_lcd && vertices.len() <= 48;
          let unshaded = match vertices {
              Vertices::Unshaded { vertex_shader, inputs, order, .. } => {
-                 Some((vertex_shader, hardware::Inputs::Decoded(inputs), order, None))
-@@ -3712,7 +3893,11 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
-             Vertices::Shaded(_) | Vertices::Prepared(_) => None,
+@@ -3713,5 +3894,9 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
          };
          if let Some((unit, inputs, order, raw)) = unshaded.filter(|_| {
 -            wide_margin == 0 && hardware.shades() && whole && registers[REG_GEOSTAGE_CONFIG] & 0x3 != 2
@@ -355,9 +349,7 @@ index 906cb27..21ba6b5 100644
 +                && registers[REG_GEOSTAGE_CONFIG] & 0x3 != 2
          }) {
              // GPUREG_PRIMITIVE_CONFIG bits 9 to 8, 0 = triangle list, 1 = strip, 2 = fan,
-             // 3 = whatever the geometry shader emitted, which is a list
-@@ -3769,11 +3954,21 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
-     } else {
+@@ -3770,9 +3955,19 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
          (shaded, placement)
      };
 +    let (placed, indices) = (&placement.placed, &placement.indices);
@@ -378,4 +370,3 @@ index 906cb27..21ba6b5 100644
 -    let (placed, indices) = (&placement.placed, &placement.indices);
      let (triangle_count, clipped_away, culled) = (placement.triangles, placement.clipped_away, placement.culled);
      let mut stats = FillStats::default();
- 
