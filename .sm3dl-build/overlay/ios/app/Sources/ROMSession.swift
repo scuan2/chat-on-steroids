@@ -357,6 +357,7 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
     /// Host-only Mario R3 lower-screen inset state. runtimeQueue only.
     private var marioRuntimeActive = false
     private var marioR3WasDown = false
+    private var marioUpWasDown = false
 
     /// Audio path: ring buffer + AVAudioEngine, started after a successful load.
     private let audioOutput = AudioOutput()
@@ -1826,6 +1827,7 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         keyboardPauseState.set(false)
         marioRuntimeActive = false
         marioR3WasDown = false
+        marioUpWasDown = false
         if let presenter = framePresenter {
             // The presenter's device and the screens it showed belong to this
             // runtime: stop presenting before the system goes away.
@@ -1932,6 +1934,7 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
 
         marioRuntimeActive = launch.entry.titleID == Self.mario3DLandUSA
         marioR3WasDown = false
+        marioUpWasDown = false
         system = handle
         framePresenter = usedPresenter
         if presenter != nil, usedPresenter == nil {
@@ -2389,19 +2392,33 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         // before the player sees it; the merged input state itself is left
         // alone and is forwarded again from the first revealed frame.
         var input = warmUpRun == nil ? inputState.snapshot() : InputSnapshot()
-        if marioRuntimeActive, let presenter = framePresenter {
+        if marioRuntimeActive {
             let r3Down = input.hostR3
-            if r3Down && !marioR3WasDown {
+            if let presenter = framePresenter, r3Down && !marioR3WasDown {
                 _ = zk_presenter_toggle_mario_touch_overlay(presenter)
             }
             marioR3WasDown = r3Down
 
-            // The lower screen is a visual inset, not a controller-operated
-            // mouse modal. Leave Circle Pad, C-stick, D-pad and face buttons
-            // untouched so the game's native course/world-map navigation works.
-            // A real finger tap on the inset is still mapped to touchscreen input.
+            // D-pad Up is the reserve-item shortcut only while the course HUD is
+            // active. Synthesize one tap on the native reserve slot, consume Up
+            // for that course frame, and leave map/pause navigation untouched.
+            let upDown = input.buttons & ZKButton.up != 0
+            if zk_mario_reserve_input_active(system) != 0 {
+                input.buttons &= ~ZKButton.up
+                if upDown && !marioUpWasDown && !input.touch {
+                    input.touch = true
+                    input.touchX = 160
+                    input.touchY = 131
+                }
+            }
+            marioUpWasDown = upDown
+
+            // R3 only reveals the original lower screen. The game still receives
+            // its native Circle Pad, C-stick, D-pad and face-button inputs; a
+            // real finger tap on the inset is mapped to touchscreen input.
         } else {
             marioR3WasDown = input.hostR3
+            marioUpWasDown = false
         }
 
         // Fast-forward: advance the console-only frames first. They produce no

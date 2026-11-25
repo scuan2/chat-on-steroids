@@ -1,8 +1,18 @@
 diff --git a/crates/zakuro-gpu/src/backend/vulkan.rs b/crates/zakuro-gpu/src/backend/vulkan.rs
-index 951e0ec..5e9c01f 100644
 --- a/crates/zakuro-gpu/src/backend/vulkan.rs
 +++ b/crates/zakuro-gpu/src/backend/vulkan.rs
-@@ -143,6 +143,9 @@ pub struct VulkanPresenter {
+@@ -96,10 +96,6 @@
+     descriptor_pool: vk::DescriptorPool,
+     pipeline_layout: vk::PipelineLayout,
+     pipeline: vk::Pipeline,
+-    /// Same screen sampler with premultiplied-alpha blending, used for the
+-    /// Mario course HUD crops over the widened top screen.
+-    hud_pipeline_layout: vk::PipelineLayout,
+-    hud_pipeline: vk::Pipeline,
+     /// what draws the top screen's two pictures in one, for 3D in red and cyan or on alternate rows, w/ a set per frame in flight
+     stereo_layout: vk::DescriptorSetLayout,
+     stereo_pipeline_layout: vk::PipelineLayout,
+@@ -143,6 +139,9 @@
      /// Whether the most recent title frame contains Mario's lower-screen pause
      /// UI; this is drawn only while paused, never as a permanent second screen.
      mario_pause_overlay: bool,
@@ -12,7 +22,25 @@ index 951e0ec..5e9c01f 100644
      /// set when the swapchain no longer matches the window
      stale: bool,
  }
-@@ -431,6 +434,7 @@ impl VulkanPresenter {
+@@ -239,8 +238,6 @@
+         let descriptor_layout = create_descriptor_layout(&device, 1)?;
+         let (pipeline_layout, pipeline) =
+             create_pipeline(&device, render_pass, descriptor_layout, FRAGMENT_SPIRV, CONSTANTS, false)?;
+-        let (hud_pipeline_layout, hud_pipeline) =
+-            create_pipeline(&device, render_pass, descriptor_layout, FRAGMENT_SPIRV, CONSTANTS, true)?;
+         let stereo_layout = create_descriptor_layout(&device, 2)?;
+         let (stereo_pipeline_layout, stereo_pipeline) =
+             create_pipeline(&device, render_pass, stereo_layout, STEREO_FRAGMENT_SPIRV, STEREO_CONSTANTS, false)?;
+@@ -401,8 +398,6 @@
+             descriptor_pool,
+             pipeline_layout,
+             pipeline,
+-            hud_pipeline_layout,
+-            hud_pipeline,
+             stereo_layout,
+             stereo_pipeline_layout,
+             stereo_pipeline,
+@@ -431,6 +426,7 @@
              stereo: Stereo::default(),
              mario_course_hud: false,
              mario_pause_overlay: false,
@@ -20,16 +48,180 @@ index 951e0ec..5e9c01f 100644
              stale: false,
          };
  
-@@ -936,6 +940,47 @@ impl VulkanPresenter {
-                 }
+@@ -828,152 +824,12 @@
+                 device.cmd_draw(command_buffer, 3, 1, 0, 0);
              }
  
+-            // Super Mario 3D Land's dedicated wide presentation has no lower
+-            // screen on the display. The Star Medals are replayed separately
+-            // from their native UI draws; only the live 3D reserve model still
+-            // needs a small crop from the completed lower LCD.
+-            if self.mario_course_hud
+-                && self.arrangement == ScreenLayout::TopOnly
+-                && self.orientation == ScreenOrientation::North
+-                && self.top_width > super::TOP_WIDTH + 1.0
+-            {
+-                if let Some((descriptor, full)) = crop(1) {
+-                    let [fx, fy, fw, fh, bl, bt, br, bb] = full;
+-                    let subcrop = |x: f32, y: f32, w: f32, h: f32| {
+-                        let sx = x / 320.0;
+-                        let sy = y / 240.0;
+-                        let sw = w / 320.0;
+-                        let sh = h / 240.0;
+-                        [
+-                            fx + fw * sx,
+-                            fy + fh * sy,
+-                            fw * sw,
+-                            fh * sh,
+-                            bl.max(fx + fw * sx),
+-                            bt.max(fy + fh * sy),
+-                            br.min(fx + fw * (sx + sw)),
+-                            bb.min(fy + fh * (sy + sh)),
+-                        ]
+-                    };
+-                    let draw_hud = |device: &ash::Device,
+-                                    command_buffer: vk::CommandBuffer,
+-                                    viewport: Viewport,
+-                                    crop_area: [f32; 8],
+-                                    mode: i32| {
+-                        let mut constants: Vec<u8> =
+-                            crop_area.iter().flat_map(|c| c.to_le_bytes()).collect();
+-                        constants.extend_from_slice(&mode.to_le_bytes());
+-                        set_viewport(device, command_buffer, viewport, self.extent);
+-                        device.cmd_bind_pipeline(
+-                            command_buffer,
+-                            vk::PipelineBindPoint::GRAPHICS,
+-                            self.hud_pipeline,
+-                        );
+-                        device.cmd_bind_descriptor_sets(
+-                            command_buffer,
+-                            vk::PipelineBindPoint::GRAPHICS,
+-                            self.hud_pipeline_layout,
+-                            0,
+-                            &[descriptor],
+-                            &[],
+-                        );
+-                        device.cmd_push_constants(
+-                            command_buffer,
+-                            self.hud_pipeline_layout,
+-                            vk::ShaderStageFlags::VERTEX,
+-                            VERT_CONSTANTS_OFFSET,
+-                            &0i32.to_le_bytes(),
+-                        );
+-                        device.cmd_push_constants(
+-                            command_buffer,
+-                            self.hud_pipeline_layout,
+-                            vk::ShaderStageFlags::FRAGMENT,
+-                            FRAG_CONSTANTS_OFFSET,
+-                            &constants,
+-                        );
+-                        device.cmd_draw(command_buffer, 3, 1, 0, 0);
+-                    };
+-
+-                    // The dedicated iPhone presentation is exact 16:9 centered
+-                    // in a wider landscape surface. Keep the reserve item in the
+-                    // right pillar, away from Nintendo's timer and from the
+-                    // Dynamic Island on the opposite side.
+-                    let game = super::layout(
+-                        self.extent.width,
+-                        self.extent.height,
+-                        ScreenLayout::TopOnly,
+-                        ScreenOrientation::North,
+-                        self.top_width,
+-                        false,
+-                    )
+-                    .0
+-                    .expect("top-only layout must have a top viewport");
+-                    let h = game.height;
+-                    let pillar_left = game.x + game.width;
+-                    let pillar_width = (self.extent.width as f32 - pillar_left).max(0.0);
+-                    // Reserve item and native medal strip share one centered stack
+-                    // in the black pillar; the host draws the captured medal strip.
+-                    let reserve_d = (h * 0.32).min(pillar_width * 0.80);
+-                    let medals_w = (h * 0.36).min(pillar_width * 0.90);
+-                    let medals_h = medals_w * (43.0 / 108.0);
+-                    let gap = reserve_d * 0.10;
+-                    let stack_h = medals_h + gap + reserve_d;
+-                    let top = game.y + (h - stack_h).max(0.0) * 0.5;
+-                    let minimum_margin = h * 0.012;
+-                    let widest = reserve_d.max(medals_w);
+-                    let hud_center_x = if pillar_width >= widest + 2.0 * minimum_margin {
+-                        pillar_left + pillar_width / 2.0
+-                    } else {
+-                        game.x + game.width - minimum_margin - widest / 2.0
+-                    };
+-
+-                    if reserve_d >= 8.0 && medals_w >= 8.0 {
+-                        draw_hud(
+-                            device,
+-                            command_buffer,
+-                            Viewport {
+-                                x: hud_center_x - reserve_d / 2.0,
+-                                y: top + medals_h + gap,
+-                                width: reserve_d,
+-                                height: reserve_d,
+-                            },
+-                            // Centre (160,131), radius 48: this sits wholly inside
+-                            // Nintendo's original white/yellow touchscreen ring.
+-                            subcrop(112.0, 83.0, 96.0, 96.0),
+-                            4,
+-                        );
+-                    }
+-                }
+-            }
+-
+-            // The permanent lower screen is intentionally hidden in the
+-            // dedicated Mario layout, but the game's in-course pause menu
+-            // genuinely lives there. Show that original 4:3 screen only while
+-            // the pause detector says it is active, centered over the frozen
+-            // game picture. It vanishes automatically on resume or map exit.
+-            if self.mario_pause_overlay
+-                && self.arrangement == ScreenLayout::TopOnly
+-                && self.orientation == ScreenOrientation::North
+-            {
 +            // R3 compatibility surface: the complete original lower LCD,
 +            // upright and centred. This is intentionally a modal rather than a
 +            // tiny picture-in-picture crop so world tabs and other touch-only
 +            // controls remain readable and usable.
 +            if let Some(viewport) = self.mario_touch_viewport() {
-+                if let Some((descriptor, area)) = crop(1) {
+                 if let Some((descriptor, area)) = crop(1) {
+-                    let game = super::layout(
+-                        self.extent.width,
+-                        self.extent.height,
+-                        ScreenLayout::TopOnly,
+-                        ScreenOrientation::North,
+-                        self.top_width,
+-                        false,
+-                    )
+-                    .0
+-                    .expect("top-only layout must have a top viewport");
+-                    let height = game.height * 0.62;
+-                    let width = height * (4.0 / 3.0);
+-                    let viewport = Viewport {
+-                        x: game.x + (game.width - width) * 0.5,
+-                        y: game.y + (game.height - height) * 0.5,
+-                        width,
+-                        height,
+-                    };
+                     let mut constants: Vec<u8> =
+                         area.iter().flat_map(|c| c.to_le_bytes()).collect();
+                     constants.extend_from_slice(&self.filter.mode().to_le_bytes());
+@@ -1009,6 +865,53 @@
+                 }
+             }
+ 
++            // The permanent lower screen is intentionally hidden in the
++            // dedicated Mario layout, but the game's in-course pause menu
++            // genuinely lives there. Show that original 4:3 screen only while
++            // the pause detector says it is active, centered over the frozen
++            // game picture. It vanishes automatically on resume or map exit.
++            if self.mario_pause_overlay
++                && self.arrangement == ScreenLayout::TopOnly
++                && self.orientation == ScreenOrientation::North
++            {
++                if let (Some((descriptor, area)), Some(viewport)) =
++                    (crop(1), self.mario_modal_viewport())
++                {
 +                    let mut constants: Vec<u8> =
 +                        area.iter().flat_map(|c| c.to_le_bytes()).collect();
 +                    constants.extend_from_slice(&self.filter.mode().to_le_bytes());
@@ -65,39 +257,10 @@ index 951e0ec..5e9c01f 100644
 +                }
 +            }
 +
-             // The permanent lower screen is intentionally hidden in the
-             // dedicated Mario layout, but the game's in-course pause menu
-             // genuinely lives there. Show that original 4:3 screen only while
-@@ -945,25 +990,9 @@ impl VulkanPresenter {
-                 && self.arrangement == ScreenLayout::TopOnly
-                 && self.orientation == ScreenOrientation::North
-             {
--                if let Some((descriptor, area)) = crop(1) {
--                    let game = super::layout(
--                        self.extent.width,
--                        self.extent.height,
--                        ScreenLayout::TopOnly,
--                        ScreenOrientation::North,
--                        self.top_width,
--                        false,
--                    )
--                    .0
--                    .expect("top-only layout must have a top viewport");
--                    let height = game.height * 0.62;
--                    let width = height * (4.0 / 3.0);
--                    let viewport = Viewport {
--                        x: game.x + (game.width - width) * 0.5,
--                        y: game.y + (game.height - height) * 0.5,
--                        width,
--                        height,
--                    };
-+                if let (Some((descriptor, area)), Some(viewport)) =
-+                    (crop(1), self.mario_modal_viewport())
-+                {
-                     let mut constants: Vec<u8> =
-                         area.iter().flat_map(|c| c.to_le_bytes()).collect();
-                     constants.extend_from_slice(&self.filter.mode().to_le_bytes());
-@@ -1185,10 +1214,78 @@ impl Presenter for VulkanPresenter {
+             painter.draw(device, command_buffer, self.frame, overlay, self.extent);
+             device.cmd_end_render_pass(command_buffer);
+             device.end_command_buffer(command_buffer).expect("end command buffer");
+@@ -1195,10 +1098,78 @@
  impl VulkanPresenter {
      pub fn set_mario_course_hud(&mut self, enabled: bool) {
          self.mario_course_hud = enabled;
@@ -176,3 +339,12 @@ index 951e0ec..5e9c01f 100644
      }
  }
  
+@@ -1229,8 +1200,6 @@
+             self.device.destroy_sampler(self.sampler, None);
+             self.device.destroy_pipeline(self.pipeline, None);
+             self.device.destroy_pipeline_layout(self.pipeline_layout, None);
+-            self.device.destroy_pipeline(self.hud_pipeline, None);
+-            self.device.destroy_pipeline_layout(self.hud_pipeline_layout, None);
+             self.device.destroy_pipeline(self.stereo_pipeline, None);
+             self.device.destroy_pipeline_layout(self.stereo_pipeline_layout, None);
+             self.device.destroy_descriptor_set_layout(self.stereo_layout, None);

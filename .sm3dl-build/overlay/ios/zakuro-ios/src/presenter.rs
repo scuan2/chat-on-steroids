@@ -196,14 +196,17 @@ pub struct PresenterHandle {
     size: (u32, u32),
     /// Whether the first presented frame already logged which path it took.
     logged_mode: bool,
-    /// Last native Mario medal image uploaded through the host overlay.
+    /// Last native Mario HUD images uploaded through the host overlay.
     mario_medal_generation: u64,
     mario_medal_size: [u32; 2],
+    mario_reserve_generation: u64,
+    mario_reserve_size: [u32; 2],
     /// Whether the temporary lower-screen inset frame texture is uploaded.
     mario_touch_overlay_frame_ready: bool,
 }
 
 const MARIO_MEDAL_TEXTURE: u64 = 0x534d_3344_4d45_444c; // "SM3DMEDL"
+const MARIO_RESERVE_TEXTURE: u64 = 0x534d_3344_5253_5256; // "SM3DRSRV"
 const MARIO_FRAME_TEXTURE: u64 = 0x534d_3344_4652_414d; // "SM3DFRAM"
 
 fn overlay_quad(texture: u64, rect: [f32; 4], clip: [u32; 4]) -> OverlayMesh {
@@ -360,6 +363,8 @@ pub extern "C" fn zk_presenter_create(
                 logged_mode: false,
                 mario_medal_generation: 0,
                 mario_medal_size: [0, 0],
+                mario_reserve_generation: 0,
+                mario_reserve_size: [0, 0],
                 mario_touch_overlay_frame_ready: false,
             })) as *mut c_void
         }
@@ -620,6 +625,16 @@ pub extern "C" fn zk_present_layout_size(
     1
 }
 
+/// Whether Mario is in active course gameplay, where D-pad Up is the reserve
+/// item action. The native pause menu and world map keep their normal controls.
+#[no_mangle]
+pub extern "C" fn zk_mario_reserve_input_active(system: *mut c_void) -> i32 {
+    let Some(system) = (unsafe { (system as *mut System).as_ref() }) else {
+        return 0;
+    };
+    (system.mario_course_hud_active() && !system.mario_pause_active()) as i32
+}
+
 /// Toggles Mario's temporary lower-screen inset. Active course gameplay and
 /// the native pause UI deliberately hide it.
 #[no_mangle]
@@ -794,66 +809,119 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
         .presenter
         .set_mario_pause_overlay(system.mario_pause_active());
 
-    // Mario's Star Medals are replayed from their original lower-screen sprite
-    // draws into transparent RGBA by the renderer. Upload only when that tiny
-    // image changes, then composite it in the real right pillar. This avoids
-    // cropping the lower LCD's coloured backing entirely.
+    // The reserve model and all three Star Medals are replayed from their
+    // original lower-screen draws into transparent RGBA. No button ring, green
+    // backing or lower-screen crop is carried into the black sidebar.
     if mario_course {
-        if let Some((pixels, [medal_width, medal_height], generation)) = system.mario_medal_image() {
-            if medal_width > 0 && medal_height > 0 {
-                if generation != presenter.mario_medal_generation {
-                    let same_size = presenter.mario_medal_size == [medal_width, medal_height]
-                        && presenter.mario_medal_generation != 0;
-                    overlay.textures.push(OverlayTexture {
-                        id: MARIO_MEDAL_TEXTURE,
-                        offset: same_size.then_some([0, 0]),
-                        size: [medal_width, medal_height],
-                        pixels: pixels.to_vec(),
-                        linear: true,
-                    });
-                    presenter.mario_medal_generation = generation;
-                    presenter.mario_medal_size = [medal_width, medal_height];
-                }
+        let reserve = system.mario_reserve_image();
+        let medals = system.mario_medal_image();
 
-                if let Some(game) = layout(
-                    presenter.size.0,
-                    presenter.size.1,
-                    ScreenLayout::TopOnly,
-                    ScreenOrientation::North,
-                    logical_width,
-                    false,
-                )
-                .0
-                {
-                    let pillar_left = game.x + game.width;
-                    let pillar_width = (presenter.size.0 as f32 - pillar_left).max(0.0);
-                    // Match the reserve slot's layout in VulkanPresenter: one centered
-                    // stack, native medal strip first, then the live reserve-item frame.
-                    let reserve_d = (game.height * 0.32).min(pillar_width * 0.80);
-                    let medals_w = (game.height * 0.36).min(pillar_width * 0.90);
-                    let medals_h = medals_w * (43.0 / 108.0);
-                    let gap = reserve_d * 0.10;
-                    let stack_h = medals_h + gap + reserve_d;
-                    let top = game.y + (game.height - stack_h).max(0.0) * 0.5;
-                    let minimum_margin = game.height * 0.012;
-                    let widest = reserve_d.max(medals_w);
-                    let hud_center_x = if pillar_width >= widest + 2.0 * minimum_margin {
-                        pillar_left + pillar_width / 2.0
-                    } else {
-                        game.x + game.width - minimum_margin - widest / 2.0
-                    };
-                    let width = medals_w;
-                    if reserve_d >= 8.0 && medals_w >= 8.0 {
-                        let height = medals_h;
-                        let x = hud_center_x - width / 2.0;
-                        let y = top;
-                        overlay.meshes.push(overlay_quad(
-                            MARIO_MEDAL_TEXTURE,
-                            [x, y, width, height],
-                            [0, 0, presenter.size.0, presenter.size.1],
-                        ));
-                    }
-                }
+        if let Some((pixels, [width, height], generation)) = reserve {
+            if width > 0 && height > 0 && generation != presenter.mario_reserve_generation {
+                let same_size = presenter.mario_reserve_size == [width, height]
+                    && presenter.mario_reserve_generation != 0;
+                overlay.textures.push(OverlayTexture {
+                    id: MARIO_RESERVE_TEXTURE,
+                    offset: same_size.then_some([0, 0]),
+                    size: [width, height],
+                    pixels: pixels.to_vec(),
+                    linear: true,
+                });
+                presenter.mario_reserve_generation = generation;
+                presenter.mario_reserve_size = [width, height];
+            }
+        }
+
+        if let Some((pixels, [width, height], generation)) = medals {
+            if width > 0 && height > 0 && generation != presenter.mario_medal_generation {
+                let same_size = presenter.mario_medal_size == [width, height]
+                    && presenter.mario_medal_generation != 0;
+                overlay.textures.push(OverlayTexture {
+                    id: MARIO_MEDAL_TEXTURE,
+                    offset: same_size.then_some([0, 0]),
+                    size: [width, height],
+                    pixels: pixels.to_vec(),
+                    linear: true,
+                });
+                presenter.mario_medal_generation = generation;
+                presenter.mario_medal_size = [width, height];
+            }
+        }
+
+        if let Some(game) = layout(
+            presenter.size.0,
+            presenter.size.1,
+            ScreenLayout::TopOnly,
+            ScreenOrientation::North,
+            logical_width,
+            false,
+        )
+        .0
+        {
+            let pillar_left = game.x + game.width;
+            let pillar_width = (presenter.size.0 as f32 - pillar_left).max(0.0);
+            let reserve_box = (game.height * 0.070).min(pillar_width * 0.44);
+            let medal_width_limit = (game.height * 0.042).min(pillar_width * 0.22);
+            let medal_height_limit = game.height * 0.17;
+            let reserve_size = reserve
+                .filter(|(_, [w, h], _)| *w > 0 && *h > 0)
+                .map(|(_, [w, h], _)| (w as f32, h as f32));
+            let medal_size = medals
+                .filter(|(_, [w, h], _)| *w > 0 && *h > 0)
+                .map(|(_, [w, h], _)| (w as f32, h as f32));
+
+            let reserve_scale = reserve_size.map_or(0.0, |(w, h)| {
+                (reserve_box / w).min(reserve_box / h)
+            });
+            let reserve_draw = reserve_size.map_or((0.0, 0.0), |(w, h)| {
+                (w * reserve_scale, h * reserve_scale)
+            });
+            let medal_scale = medal_size.map_or(0.0, |(w, h)| {
+                (medal_width_limit / w).min(medal_height_limit / h)
+            });
+            let medal_draw = medal_size.map_or((0.0, 0.0), |(w, h)| {
+                (w * medal_scale, h * medal_scale)
+            });
+            let has_reserve = reserve_draw.0 >= 8.0 && reserve_draw.1 >= 8.0;
+            let has_medals = medal_draw.0 >= 8.0 && medal_draw.1 >= 8.0;
+            let gap = if has_reserve && has_medals { game.height * 0.010 } else { 0.0 };
+            let stack_height = (if has_reserve { reserve_box } else { 0.0 })
+                + gap
+                + if has_medals { medal_draw.1 } else { 0.0 };
+            let top = game.y + (game.height - stack_height).max(0.0) * 0.5;
+            let minimum_margin = game.height * 0.012;
+            let widest = reserve_draw.0.max(medal_draw.0);
+            let hud_center_x = if pillar_width >= widest + 2.0 * minimum_margin {
+                pillar_left + pillar_width / 2.0
+            } else {
+                game.x + game.width - minimum_margin - widest / 2.0
+            };
+            let clip = [0, 0, presenter.size.0, presenter.size.1];
+
+            // Reserve power-up first, then the three original medals vertically.
+            if has_reserve {
+                overlay.meshes.push(overlay_quad(
+                    MARIO_RESERVE_TEXTURE,
+                    [
+                        hud_center_x - reserve_draw.0 / 2.0,
+                        top + (reserve_box - reserve_draw.1) / 2.0,
+                        reserve_draw.0,
+                        reserve_draw.1,
+                    ],
+                    clip,
+                ));
+            }
+            if has_medals {
+                overlay.meshes.push(overlay_quad(
+                    MARIO_MEDAL_TEXTURE,
+                    [
+                        hud_center_x - medal_draw.0 / 2.0,
+                        top + if has_reserve { reserve_box + gap } else { 0.0 },
+                        medal_draw.0,
+                        medal_draw.1,
+                    ],
+                    clip,
+                ));
             }
         }
     }
