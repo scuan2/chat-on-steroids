@@ -1,4 +1,4 @@
-﻿/*
+/*
  * ZakuroBridge.h — C ABI of libzakuro_ios.a for the 3ds2apple shell.
  *
  * Hand-written mirror of the `zakuro-ios` Rust crate
@@ -548,6 +548,17 @@ int32_t zk_presenter_set_orientation(zk_presenter_t presenter, uint32_t orientat
  */
 int32_t zk_present_layout_size(uint32_t layout, uint32_t orientation,
                                uint32_t *out_width, uint32_t *out_height);
+
+/** Toggle Mario's temporary lower-screen inset. */
+int32_t zk_presenter_toggle_mario_touch_overlay(zk_presenter_t presenter);
+
+/**
+ * Map a point in the whole Mario Metal surface to the temporary lower-screen
+ * inset. Returns 1 only while the inset is visible and the point is inside it.
+ */
+int32_t zk_present_mario_touch_map(zk_presenter_t presenter,
+                                   float x, float y,
+                                   uint16_t *out_x, uint16_t *out_y);
 
 /**
  * Maps a touch on the presented layer to lower-screen pixels.
