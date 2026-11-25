@@ -196,15 +196,11 @@ pub struct PresenterHandle {
     size: (u32, u32),
     /// Whether the first presented frame already logged which path it took.
     logged_mode: bool,
-    /// Last native Mario medal image uploaded through the host overlay.
-    mario_medal_generation: u64,
-    mario_medal_size: [u32; 2],
     /// Controller cursor inside Mario's temporary lower-screen modal.
     mario_touch_cursor: [f32; 2],
     mario_touch_overlay_textures_ready: bool,
 }
 
-const MARIO_MEDAL_TEXTURE: u64 = 0x534d_3344_4d45_444c; // "SM3DMEDL"
 const MARIO_CURSOR_TEXTURE: u64 = 0x534d_3344_4355_5253; // "SM3DCURS"
 const MARIO_FRAME_TEXTURE: u64 = 0x534d_3344_4652_414d; // "SM3DFRAM"
 
@@ -385,8 +381,6 @@ pub extern "C" fn zk_presenter_create(
                 presenter,
                 size: (width, height),
                 logged_mode: false,
-                mario_medal_generation: 0,
-                mario_medal_size: [0, 0],
                 mario_touch_cursor: [0.5, 0.5],
                 mario_touch_overlay_textures_ready: false,
             })) as *mut c_void
@@ -847,54 +841,7 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
         .presenter
         .set_mario_pause_overlay(system.mario_pause_active());
 
-    // Mario's Star Medals are replayed from their original lower-screen sprite
-    // draws into transparent RGBA by the renderer. Upload only when that tiny
-    // image changes, then composite it in the real right pillar. This avoids
-    // cropping the lower LCD's coloured backing entirely.
-    if mario_course {
-        if let Some((pixels, [medal_width, medal_height], generation)) = system.mario_medal_image() {
-            if medal_width > 0 && medal_height > 0 {
-                if generation != presenter.mario_medal_generation {
-                    let same_size = presenter.mario_medal_size == [medal_width, medal_height]
-                        && presenter.mario_medal_generation != 0;
-                    overlay.textures.push(OverlayTexture {
-                        id: MARIO_MEDAL_TEXTURE,
-                        offset: same_size.then_some([0, 0]),
-                        size: [medal_width, medal_height],
-                        pixels: pixels.to_vec(),
-                        linear: true,
-                    });
-                    presenter.mario_medal_generation = generation;
-                    presenter.mario_medal_size = [medal_width, medal_height];
-                }
-
-                if let Some(game) = layout(
-                    presenter.size.0,
-                    presenter.size.1,
-                    ScreenLayout::TopOnly,
-                    ScreenOrientation::North,
-                    logical_width,
-                    false,
-                )
-                .0
-                {
-                    let pillar_left = game.x + game.width;
-                    let pillar_width = (presenter.size.0 as f32 - pillar_left).max(0.0);
-                    let width = (game.height * 0.105).min(pillar_width * 0.72);
-                    if width >= 8.0 {
-                        let height = width * medal_height as f32 / medal_width as f32;
-                        let x = pillar_left + (pillar_width - width) * 0.5;
-                        let y = game.y + game.height * 0.040;
-                        overlay.meshes.push(overlay_quad(
-                            MARIO_MEDAL_TEXTURE,
-                            [x, y, width, height],
-                            [0, 0, presenter.size.0, presenter.size.1],
-                        ));
-                    }
-                }
-            }
-        }
-    }
+    presenter.presenter.set_mario_medal_state(system.mario_medal_state());
 
     if let Some(viewport) = presenter.presenter.mario_touch_viewport() {
         if !presenter.mario_touch_overlay_textures_ready {

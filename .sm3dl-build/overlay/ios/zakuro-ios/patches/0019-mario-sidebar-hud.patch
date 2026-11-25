@@ -1,0 +1,678 @@
+diff --git a/crates/zakuro-core/src/lib.rs b/crates/zakuro-core/src/lib.rs
+index 0308042..ef35f31 100644
+--- a/crates/zakuro-core/src/lib.rs
++++ b/crates/zakuro-core/src/lib.rs
+@@ -1233,10 +1233,9 @@ impl System {
+         self.gpu.mario_pause_active()
+     }
+
+-    /// The last completed Mario course frame's native Star Medal strip,
+-    /// replayed to transparent premultiplied RGBA for the host presentation.
+-    pub fn mario_medal_image(&self) -> Option<(&[u8], [u32; 2], u64)> {
+-        self.gpu.mario_medal_image()
++    /// The three native Star Medal identities in display order.
++    pub fn mario_medal_state(&self) -> [u8; 3] {
++        self.gpu.mario_medal_state()
+     }
+
+     /// the top screen's right eye picture on the host GPU, like gpu_screen gives the left, when the title draws in 3D
+diff --git a/crates/zakuro-gpu/shaders/present.frag b/crates/zakuro-gpu/shaders/present.frag
+index 97c3d16..9c2668b 100644
+--- a/crates/zakuro-gpu/shaders/present.frag
++++ b/crates/zakuro-gpu/shaders/present.frag
+@@ -60,6 +60,50 @@ vec3 shown(sampler2D image, vec4 area, vec4 bounds) {
+     return sum / float(taps.x * taps.y);
+ }
+
++#ifndef STEREO
++// Analytic edges stay sharp at any host resolution. Match the original
++// octagonal gold medal, pale inset, and five-point star with two eyes.
++float coverage(float d) {
++    float aa = max(fwidth(d), 0.001);
++    return 1.0 - smoothstep(-aa * 0.5, aa * 0.5, d);
++}
++vec4 medal(bool collected, bool identified) {
++    vec2 p = (uv - 0.5) * 2.0;
++    float r = length(p);
++    if (!collected) {
++        float a = atan(p.y, p.x);
++        float arc = abs(fract(a * (8.0 / 6.28318530718) + 0.5) - 0.5);
++        float dash = coverage(arc - 0.33);
++        float alpha = coverage(abs(r - 0.74) - 0.075) * dash;
++        // The native empty glyph is black and disappears on a black pillar.
++        // A neutral light outline preserves its dashed shape and legibility.
++        vec3 gray = identified ? vec3(0.62, 0.65, 0.70) : vec3(0.36, 0.38, 0.42);
++        return vec4(gray * alpha, alpha);
++    }
++    vec2 q = abs(p);
++    float oct = max(max(q.x, q.y), (q.x + q.y) * 0.70710678);
++    float alpha = coverage(oct - 0.91);
++    vec3 c = vec3(0.27, 0.16, 0.025);
++    c = mix(c, vec3(1.0, 0.86, 0.23), coverage(oct - 0.855));
++    vec3 gold = mix(vec3(1.0, 0.94, 0.42), vec3(0.93, 0.56, 0.055), clamp(uv.y, 0.0, 1.0));
++    c = mix(c, gold, coverage(oct - 0.79));
++    c = mix(c, vec3(0.70, 0.40, 0.055), coverage(r - 0.635));
++    c = mix(c, mix(vec3(1.0, 0.98, 0.79), vec3(1.0, 0.84, 0.37), uv.y), coverage(r - 0.585));
++    float a = atan(p.y, p.x) + 1.57079632679 + 6.28318530718;
++    float step_angle = 0.62831853072;
++    float sector = floor(a / step_angle);
++    float t = mod(a, step_angle);
++    float r0 = mod(sector, 2.0) < 1.0 ? 0.45 : 0.215;
++    float r1 = mod(sector, 2.0) < 1.0 ? 0.215 : 0.45;
++    float edge = r0 * r1 * sin(step_angle) / (r1 * sin(step_angle - t) + r0 * sin(t));
++    c = mix(c, vec3(0.77, 0.45, 0.045), coverage(r - edge - 0.025));
++    c = mix(c, vec3(1.0, 0.73, 0.09), coverage(r - edge + 0.012));
++    float eye = length(vec2((abs(p.x) - 0.079) / 0.028, (p.y + 0.033) / 0.064));
++    c = mix(c, vec3(0.25, 0.16, 0.04), coverage(eye - 1.0));
++    return vec4(c * alpha, alpha);
++}
++#endif
++
+ void main() {
+ #ifdef STEREO
+     vec3 left = shown(screen, crop.area, crop.bounds);
+@@ -79,24 +123,36 @@ void main() {
+         colour = vec4((int(gl_FragCoord.y) & 1) == 0 ? left : right, 1.0);
+     }
+ #else
+-    vec3 rgb = shown(screen, crop.area, crop.bounds);
+-    if (crop.mode == 3) {
+-        // Mario 3D Land course medals: the original lower-screen status strip
+-        // is green behind the three medal sprites. Remove only that backing;
+-        // yellow/black/white medal pixels stay untouched.
+-        float green_backing = step(0.34, rgb.g)
+-            * step(rgb.r * 1.14, rgb.g)
+-            * step(rgb.b * 1.08, rgb.g);
+-        float alpha = 1.0 - green_backing;
+-        colour = vec4(rgb * alpha, alpha);
+-    } else if (crop.mode == 4) {
+-        // The reserve item is a live 3D model inside a circular slot. Keep the
+-        // native circle and fade only its square crop's corners.
+-        float radius = length(uv * 2.0 - 1.0);
+-        float alpha = 1.0 - smoothstep(0.96, 1.0, radius);
+-        colour = vec4(rgb * alpha, alpha);
++    if (crop.mode >= 5) {
++        bool collected = crop.mode == 5;
++        bool identified = crop.mode != 7;
++        if (!identified) {
++            // Read the same native glyph on the completed lower LCD when
++            // the draw did not expose its original atlas cell. A gold
++            // interior and a dark dashed outline are the two retail states.
++            int gold = 0;
++            int dark = 0;
++            for (int y = 0; y < 5; ++y) {
++                for (int x = 0; x < 5; ++x) {
++                    vec2 at = crop.area.xy + crop.area.zw * ((vec2(x,y) + 0.5) / 5.0);
++                    vec3 s = texture(screen, clamp(at, crop.bounds.xy, crop.bounds.zw)).rgb;
++                    if (s.r > 0.55 && s.g > 0.32 && s.r > s.g * 0.92 && s.b < s.g * 0.65) ++gold;
++                    if (max(max(s.r,s.g),s.b) < 0.20) ++dark;
++                }
++            }
++            collected = gold >= 3;
++            identified = collected || dark >= 2;
++        }
++        colour = medal(collected, identified);
+     } else {
+-        colour = vec4(rgb, 1.0);
++        vec3 rgb = shown(screen, crop.area, crop.bounds);
++        if (crop.mode == 4) {
++            // The full 153.6px frame, not an arbitrary cut through the item.
++            float alpha = coverage(length(uv * 2.0 - 1.0) - (153.6 / 156.0));
++            colour = vec4(rgb * alpha, alpha);
++        } else {
++            colour = vec4(rgb, 1.0);
++        }
+     }
+ #endif
+ }
+diff --git a/crates/zakuro-gpu/shaders/present.frag.spv b/crates/zakuro-gpu/shaders/present.frag.spv
+index 193c6b31c4da570fc8fbda284f092dd7aabb1583..ae7658be572a544fc2df429ad96f4984dd7756e8 100644
+GIT binary patch
+literal 15184
+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
+Uum2~U?Ty!OZr|(W{kzP60spF#y8r+H
+
+literal 6596
+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
+XYxgyv7Vylee;qh3<G#82{vYUnJfC2z
+
+diff --git a/crates/zakuro-gpu/src/backend/vulkan.rs b/crates/zakuro-gpu/src/backend/vulkan.rs
+index 5e9c01f..ea20d25 100644
+--- a/crates/zakuro-gpu/src/backend/vulkan.rs
++++ b/crates/zakuro-gpu/src/backend/vulkan.rs
+@@ -140,6 +140,7 @@ pub struct VulkanPresenter {
+     stereo: Stereo,
+     /// Whether the most recent title frame is a Mario 3D Land course frame.
+     mario_course_hud: bool,
++    mario_medal_state: [u8; 3],
+     /// Whether the most recent title frame contains Mario's lower-screen pause
+     /// UI; this is drawn only while paused, never as a permanent second screen.
+     mario_pause_overlay: bool,
+@@ -433,6 +434,7 @@ impl VulkanPresenter {
+             integer: false,
+             stereo: Stereo::default(),
+             mario_course_hud: false,
++            mario_medal_state: [0; 3],
+             mario_pause_overlay: false,
+             mario_touch_overlay: false,
+             stale: false,
+@@ -832,10 +834,9 @@ impl VulkanPresenter {
+                 device.cmd_draw(command_buffer, 3, 1, 0, 0);
+             }
+
+-            // Super Mario 3D Land's dedicated wide presentation has no lower
+-            // screen on the display. The Star Medals are replayed separately
+-            // from their native UI draws; only the live 3D reserve model still
+-            // needs a small crop from the completed lower LCD.
++            // One sidebar, centred in the actual right pillar. The complete
++            // original reserve slot and the three readable medal states share
++            // the same alignment, independent of the game viewport resolution.
+             if self.mario_course_hud
+                 && self.arrangement == ScreenLayout::TopOnly
+                 && self.orientation == ScreenOrientation::North
+@@ -915,28 +916,26 @@ impl VulkanPresenter {
+                     let h = game.height;
+                     let pillar_left = game.x + game.width;
+                     let pillar_width = (self.extent.width as f32 - pillar_left).max(0.0);
+-                    let reserve_d = (h * 0.075).min(pillar_width * 0.60).max(h * 0.050);
+-                    let minimum_margin = h * 0.012;
+-                    let hud_center_x = if pillar_width >= reserve_d + 2.0 * minimum_margin {
+-                        pillar_left + pillar_width / 2.0
+-                    } else {
+-                        game.x + game.width - minimum_margin - reserve_d / 2.0
+-                    };
+-
+-                    draw_hud(
+-                        device,
+-                        command_buffer,
+-                        Viewport {
+-                            x: hud_center_x - reserve_d / 2.0,
+-                            y: game.y + h * 0.105,
+-                            width: reserve_d,
+-                            height: reserve_d,
+-                        },
+-                        // Centre (160,131), radius 48: this sits wholly inside
+-                        // Nintendo's original white/yellow touchscreen ring.
+-                        subcrop(112.0, 83.0, 96.0, 96.0),
+-                        4,
+-                    );
++                    let reserve_d = (h * 0.16).min(pillar_width * 0.78);
++                    if reserve_d >= 8.0 {
++                        let center = pillar_left + pillar_width * 0.5;
++                        let top = game.y + h * 0.022;
++                        let medal_d = reserve_d * 0.60;
++                        let gap = reserve_d * 0.12;
++                        let square = |y: f32, d: f32| Viewport {
++                            x: center - d * 0.5, y, width: d, height: d,
++                        };
++                        // The original BCLYT frame is 128 * 1.2 = 153.6
++                        // native pixels, centred at (160,131). Keep it whole.
++                        draw_hud(device, command_buffer, square(top, reserve_d),
++                            subcrop(82.0, 53.0, 156.0, 156.0), 4);
++                        for (i, state) in self.mario_medal_state.iter().enumerate() {
++                            let y = top + reserve_d + gap + i as f32 * (medal_d + gap);
++                            let mode = match state { 2 => 5, 1 => 6, _ => 7 };
++                            draw_hud(device, command_buffer, square(y, medal_d),
++                                subcrop(117.0 + i as f32 * 28.0, 6.0, 30.0, 30.0), mode);
++                        }
++                    }
+                 }
+             }
+
+@@ -1212,6 +1211,10 @@ impl Presenter for VulkanPresenter {
+ }
+
+ impl VulkanPresenter {
++    pub fn set_mario_medal_state(&mut self, state: [u8; 3]) {
++        self.mario_medal_state = state;
++    }
++
+     pub fn set_mario_course_hud(&mut self, enabled: bool) {
+         self.mario_course_hud = enabled;
+         if enabled {
+diff --git a/crates/zakuro-gpu/src/lib.rs b/crates/zakuro-gpu/src/lib.rs
+index a2e277a..5d2284d 100644
+--- a/crates/zakuro-gpu/src/lib.rs
++++ b/crates/zakuro-gpu/src/lib.rs
+@@ -754,11 +754,9 @@ impl Gpu {
+         self.resources.mario_pause_active()
+     }
+
+-    /// The last completed Mario course frame's Star Medal strip, replayed from
+-    /// the game's native lower-screen UI draws into transparent premultiplied
+-    /// RGBA. The generation changes only when the published image changes.
+-    pub fn mario_medal_image(&self) -> Option<(&[u8], [u32; 2], u64)> {
+-        self.resources.mario_medal_image()
++    /// The three native Star Medal identities in display order.
++    pub fn mario_medal_state(&self) -> [u8; 3] {
++        self.resources.mario_medal_state()
+     }
+
+     /// where the picture between a screen's picture and the one b4 is, like screen_image has the screen's, none when there's none
+diff --git a/crates/zakuro-gpu/src/raster.rs b/crates/zakuro-gpu/src/raster.rs
+index 21ba6b5..cf4e54d 100644
+--- a/crates/zakuro-gpu/src/raster.rs
++++ b/crates/zakuro-gpu/src/raster.rs
+@@ -2013,16 +2013,9 @@ pub struct Resources {
+     mario_pause_dialog: bool,
+     /// Whether the last completed title frame contained the in-course pause UI.
+     mario_pause_active: bool,
+-    /// Transparent software replay target for Mario's native Star Medal draws.
+-    /// Only those tiny UI draws touch it; the main game remains on Vulkan.
+-    mario_medal_surface: Option<Surface>,
+-    /// Union of the medal draws' window-space bounds in the rotated 240x400
+-    /// lower-screen render target.
+-    mario_medal_bounds: Option<[i32; 4]>,
+-    /// Published upright premultiplied RGBA medal strip for the host overlay.
+-    mario_medal_pixels: Vec<u8>,
+-    mario_medal_size: [u32; 2],
+-    mario_medal_generation: u64,
++    /// Native picture-font medal identities, 0 unknown, 1 empty, 2 collected.
++    mario_medal_pending: [u8; 3],
++    mario_medal_state: [u8; 3],
+ }
+
+ impl Resources {
+@@ -2030,22 +2023,8 @@ impl Resources {
+         self.mario_hud_active = self.mario_hud_parts & MARIO_HUD_ALL == MARIO_HUD_ALL;
+         self.mario_pause_active =
+             self.mario_pause_rows == 7 || (self.mario_pause_active && self.mario_pause_dialog);
+-        if self.mario_hud_active {
+-            if let (Some(surface), Some(bounds)) = (&self.mario_medal_surface, self.mario_medal_bounds) {
+-                let (pixels, size) = upright_mario_medals(surface, bounds);
+-                if !pixels.is_empty()
+-                    && (size != self.mario_medal_size || pixels != self.mario_medal_pixels)
+-                {
+-                    self.mario_medal_pixels = pixels;
+-                    self.mario_medal_size = size;
+-                    self.mario_medal_generation = self.mario_medal_generation.wrapping_add(1).max(1);
+-                }
+-            }
+-        }
+-        if let Some(surface) = self.mario_medal_surface.as_mut() {
+-            surface.data.fill(0);
+-        }
+-        self.mario_medal_bounds = None;
++        self.mario_medal_state = if self.mario_hud_active { self.mario_medal_pending } else { [0; 3] };
++        self.mario_medal_pending = [0; 3];
+         self.mario_hud_parts = 0;
+         self.mario_pause_rows = 0;
+         self.mario_pause_dialog = false;
+@@ -2059,16 +2038,8 @@ impl Resources {
+         self.mario_pause_active
+     }
+
+-    pub(crate) fn mario_medal_image(&self) -> Option<(&[u8], [u32; 2], u64)> {
+-        (self.mario_hud_active
+-            && self.mario_medal_size[0] != 0
+-            && self.mario_medal_size[1] != 0
+-            && !self.mario_medal_pixels.is_empty())
+-            .then_some((
+-                self.mario_medal_pixels.as_slice(),
+-                self.mario_medal_size,
+-                self.mario_medal_generation,
+-            ))
++    pub(crate) fn mario_medal_state(&self) -> [u8; 3] {
++        self.mario_medal_state
+     }
+
+     /// do draws hand their vertex work to other threads (see Gpu::scout), on the host's GPU while the CPU shades
+@@ -2991,146 +2962,51 @@ impl DrawState<'_> {
+     }
+ }
+
+-/// Replays one of Mario's native Star Medal draws into a transparent software
+-/// target. The title's texture environment, alpha test and textures are reused
+-/// verbatim; only the output blend is changed to ordinary premultiplied
+-/// source-over, matching the PC port's transparent HUD target.
+-fn capture_mario_medals(
++/// Identify the original PictureFont20 medal glyphs by decoded RGBA texels.
++/// Each glyph occupies one 32x32 cell on the 32x256 atlas page. The hashes
++/// are of the two retail glyphs (C and D), not of a composited LCD crop.
++fn capture_mario_medal_state(
+     registers: &[u32],
+-    state: &DrawState,
+-    placed: &[Screen],
+-    indices: &[u32],
+-    surface: &mut Option<Surface>,
+-    bounds: &mut Option<[i32; 4]>,
++    shaded: &[Vertex],
++    order: Option<&[usize]>,
++    texture: &BoundTexture,
++    slots: &mut [u8; 3],
+ ) {
+-    const WIDTH: u32 = 240;
+-    const HEIGHT: u32 = 400;
+-    if state.target.buffer_width != WIDTH || state.target.buffer_height != HEIGHT || indices.len() < 3 {
++    if texture.width != 32 || texture.height != 256 || texture.texels.len() < 8192 {
+         return;
+     }
+-
+-    if surface.as_ref().is_none_or(|s| s.data.len() != (WIDTH * HEIGHT * 4) as usize) {
+-        *surface = Some(Surface {
+-            base: 0,
+-            bytes: 4,
+-            first: 0,
+-            data: vec![0; (WIDTH * HEIGHT * 4) as usize],
+-        });
+-    }
+-
+-    let mut overlay_registers = registers.to_vec();
+-    // RGB: src-alpha / one-minus-src-alpha. Alpha: one /
+-    // one-minus-src-alpha. This produces premultiplied RGBA over transparent.
+-    overlay_registers[REG_BLEND_FUNC] = 0x7176_0000;
+-    let overlay_state = DrawState {
+-        target: ColorTarget {
+-            addr: 0,
+-            left: state.target.left,
+-            bottom: state.target.bottom,
+-            right: state.target.right,
+-            top: state.target.top,
+-            buffer_width: WIDTH,
+-            buffer_height: HEIGHT,
+-            format: ColorFormat::Rgba8,
+-            write: [true; 4],
+-        },
+-        depth_map: state.depth_map,
+-        depth_stencil: None,
+-        tex_env: state.tex_env,
+-        alpha_test: state.alpha_test,
+-        blend: crate::blend::Blend::read(&overlay_registers),
+-        logic_op: None,
+-        textures: state.textures,
+-        texture2_uses_coord1: state.texture2_uses_coord1,
+-        texture0_projected: state.texture0_projected,
+-        lighting: state.lighting,
+-        tables: state.tables,
+-        proctex: state.proctex,
+-        proctex_tables: state.proctex_tables,
+-        fog: None,
+-        fog_table: state.fog_table,
+-    };
+-
+-    let triangles: Vec<[Screen; 3]> = indices
+-        .chunks_exact(3)
+-        .filter_map(|index| {
+-            let a = *index.first()? as usize;
+-            let b = *index.get(1)? as usize;
+-            let c = *index.get(2)? as usize;
+-            Some([*placed.get(a)?, *placed.get(b)?, *placed.get(c)?])
+-        })
+-        .collect();
+-    if triangles.is_empty() {
+-        return;
+-    }
+-
+-    let mut stats = FillStats::default();
+-    let mut no_depth = None;
+-    fill(
+-        surface,
+-        &mut no_depth,
+-        &triangles,
+-        overlay_state.target.bottom..overlay_state.target.top,
+-        &overlay_state,
+-        &mut stats,
+-    );
+-
+-    let mut left = WIDTH as i32;
+-    let mut bottom = HEIGHT as i32;
+-    let mut right = 0i32;
+-    let mut top = 0i32;
+-    for &index in indices {
+-        let Some(vertex) = placed.get(index as usize) else { continue };
+-        left = left.min(vertex.x.floor() as i32);
+-        right = right.max(vertex.x.ceil() as i32);
+-        bottom = bottom.min(vertex.y.floor() as i32);
+-        top = top.max(vertex.y.ceil() as i32);
+-    }
+-    left = (left - 1).clamp(0, WIDTH as i32);
+-    right = (right + 1).clamp(0, WIDTH as i32);
+-    bottom = (bottom - 1).clamp(0, HEIGHT as i32);
+-    top = (top + 1).clamp(0, HEIGHT as i32);
+-    if left >= right || bottom >= top {
+-        return;
+-    }
+-    match bounds {
+-        Some(found) => {
+-            found[0] = found[0].min(left);
+-            found[1] = found[1].min(bottom);
+-            found[2] = found[2].max(right);
+-            found[3] = found[3].max(top);
+-        }
+-        None => *bounds = Some([left, bottom, right, top]),
+-    }
+-}
+-
+-/// Crops the rotated lower-screen replay to the medal content and turns it
+-/// upright. In the native 240x400 render target, lower-screen X runs opposite
+-/// window Y and lower-screen Y runs opposite window X.
+-fn upright_mario_medals(surface: &Surface, [left, bottom, right, top]: [i32; 4]) -> (Vec<u8>, [u32; 2]) {
+-    if left >= right || bottom >= top {
+-        return (Vec::new(), [0, 0]);
+-    }
+-    let source_width = (right - left) as u32;
+-    let source_height = (top - bottom) as u32;
+-    let (width, height) = (source_height, source_width);
+-    let mut pixels = vec![0u8; (width * height * 4) as usize];
+-    for y in 0..height {
+-        for x in 0..width {
+-            let sx = (right - 1 - y as i32) as u32;
+-            let sy = (top - 1 - x as i32) as u32;
+-            let row = 400 - 1 - sy;
+-            let index = crate::format::morton_offset(sx, row, 240, 1);
+-            let offset = (index * 4 - surface.first) as usize;
+-            if offset + 4 > surface.data.len() {
+-                continue;
++    let topology = (registers[REG_PRIMITIVE_CONFIG] >> 8) & 3;
++    let count = order.map_or(shaded.len(), |indices| indices.len());
++    let mut cached = [None; 8];
++    for (a, b, c) in assemble(topology, count) {
++        let tri = [a, b, c].map(|i| &shaded[order.map_or(i, |indices| indices[i])]);
++        if tri.iter().any(|v| v.clip[3] <= 0.0) {
++            continue;
++        }
++        let x = tri.iter().map(|v| (1.0 - v.clip[1] / v.clip[3]) * 160.0).sum::<f32>() / 3.0;
++        let v = tri.iter().map(|v| v.texcoords[0][1]).sum::<f32>() / 3.0;
++        if !(105.0..=213.0).contains(&x) || !(0.0..=1.0).contains(&v) {
++            continue;
++        }
++        let cell = (((1.0 - v) * 8.0).floor() as usize).min(7);
++        let value = *cached[cell].get_or_insert_with(|| {
++            let mut hash = 0xcbf29ce484222325u64;
++            for pixel in &texture.texels[cell * 1024..(cell + 1) * 1024] {
++                for byte in pixel {
++                    hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3);
++                }
++            }
++            match hash {
++                0x91a8128188261bfc => 2, // collected
++                0xdf6a016a8e350c4c => 1, // empty
++                _ => 0,
+             }
+-            let rgba = ColorFormat::Rgba8.decode(&surface.data[offset..offset + 4]);
+-            let out = ((y * width + x) * 4) as usize;
+-            pixels[out..out + 4].copy_from_slice(&rgba);
++        });
++        if value != 0 {
++            let slot = (((x - 132.0) / 28.0).round() as i32).clamp(0, 2) as usize;
++            slots[slot] = value;
+         }
+     }
+-    (pixels, [width, height])
+ }
+
+ /// rasterizes one triangle, texturing and the combiners, then the alpha,
+@@ -3957,14 +3833,9 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
+     let (placed, indices) = (&placement.placed, &placement.indices);
+     let mario_ui = mario_course_ui_draw(shaded, &state.target, state.textures);
+     if mario_ui.hud_part == MARIO_HUD_MEDALS {
+-        capture_mario_medals(
+-            registers,
+-            &state,
+-            placed,
+-            indices,
+-            &mut resources.mario_medal_surface,
+-            &mut resources.mario_medal_bounds,
+-        );
++        if let Some(texture) = state.textures[0].as_ref() {
++            capture_mario_medal_state(registers, shaded, order, texture, &mut resources.mario_medal_pending);
++        }
+     }
+     resources.mario_hud_parts |= mario_ui.hud_part;
+     resources.mario_pause_rows |= mario_ui.pause_row;
