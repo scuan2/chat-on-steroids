@@ -45,7 +45,7 @@ index 53e2514..951e0ec 100644
                      let game = super::layout(
                          self.extent.width,
                          self.extent.height,
-@@ -909,46 +909,28 @@ impl VulkanPresenter {
+@@ -909,46 +909,34 @@ impl VulkanPresenter {
                      .0
                      .expect("top-only layout must have a top viewport");
                      let h = game.height;
@@ -60,15 +60,17 @@ index 53e2514..951e0ec 100644
                      let pillar_width = (self.extent.width as f32 - pillar_left).max(0.0);
 -                    let minimum_margin = h * 0.018;
 -                    let hud_center_x = if pillar_width >= widest + 2.0 * minimum_margin {
-+                    let reserve_d = (h * 0.075).min(pillar_width * 0.60).max(h * 0.050);
++                    let reserve_d = (h * 0.32).min(pillar_width * 0.80);
++                    let medals_w = (h * 0.36).min(pillar_width * 0.90);
++                    let medals_h = medals_w * (43.0 / 108.0);
++                    let gap = reserve_d * 0.10;
++                    let stack_h = medals_h + gap + reserve_d;
++                    let top = game.y + (h - stack_h).max(0.0) * 0.5;
 +                    let minimum_margin = h * 0.012;
-+                    let hud_center_x = if pillar_width >= reserve_d + 2.0 * minimum_margin {
++                    let hud_center_x = if pillar_width >= reserve_d.max(medals_w) + 2.0 * minimum_margin {
                          pillar_left + pillar_width / 2.0
                      } else {
--                        // Exact-16:9 displays have no pillar. Keep the same
--                        // compact stack just inside the game edge as a fallback.
--                        game.x + game.width - minimum_margin - widest / 2.0
-+                        game.x + game.width - minimum_margin - reserve_d / 2.0
++                        game.x + game.width - minimum_margin - reserve_d.max(medals_w) / 2.0
                      };
  
                      draw_hud(
@@ -80,7 +82,7 @@ index 53e2514..951e0ec 100644
 -                            width: medals_w,
 -                            height: medals_h,
 +                            x: hud_center_x - reserve_d / 2.0,
-+                            y: game.y + h * 0.105,
++                            y: top + medals_h + gap,
 +                            width: reserve_d,
 +                            height: reserve_d,
                          },
