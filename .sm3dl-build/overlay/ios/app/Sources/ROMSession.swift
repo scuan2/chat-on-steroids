@@ -357,7 +357,7 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
     /// Host-only Mario lower-screen controller state. runtimeQueue only.
     private var marioRuntimeActive = false
     private var marioR3WasDown = false
-    private var marioUpWasDown = false
+    private var marioReserveWasDown = false
     private var marioLWasDown = false
     private var marioRWasDown = false
     private var marioWorldIndex = 0
@@ -1833,7 +1833,7 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         keyboardPauseState.set(false)
         marioRuntimeActive = false
         marioR3WasDown = false
-        marioUpWasDown = false
+        marioReserveWasDown = false
         marioLWasDown = false
         marioRWasDown = false
         marioWorldIndex = 0
@@ -1946,7 +1946,7 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
 
         marioRuntimeActive = launch.entry.titleID == Self.mario3DLandUSA
         marioR3WasDown = false
-        marioUpWasDown = false
+        marioReserveWasDown = false
         marioLWasDown = false
         marioRWasDown = false
         marioWorldIndex = 0
@@ -2413,6 +2413,8 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         if marioRuntimeActive {
             let r3Down = input.hostR3
             let upDown = input.buttons & ZKButton.up != 0
+            let downDown = input.buttons & ZKButton.down != 0
+            let reserveDown = upDown || downDown
             let lDown = input.buttons & ZKButton.l != 0
             let rDown = input.buttons & ZKButton.r != 0
             let courseActive = zk_mario_reserve_input_active(system) != 0
@@ -2420,12 +2422,11 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
 
             if courseActive {
                 marioTouchOverlayVisible = false
-                // D-pad Up is the reserve-item shortcut only while the course HUD
-                // is active. Synthesize one tap on Nintendo's native reserve slot,
-                // consume Up for that course frame, and leave every other button
-                // and the C-stick alone.
-                input.buttons &= ~ZKButton.up
-                if upDown && !marioUpWasDown && !input.touch {
+                // D-pad Up or Down activates the native reserve-item slot only
+                // during course gameplay. Consume both directions in that state
+                // so neither also reaches the game as a directional press.
+                input.buttons &= ~(ZKButton.up | ZKButton.down)
+                if reserveDown && !marioReserveWasDown && !input.touch {
                     input.touch = true
                     input.touchX = 160
                     input.touchY = 131
@@ -2497,12 +2498,12 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
             }
 
             marioR3WasDown = r3Down
-            marioUpWasDown = courseActive ? upDown : false
+            marioReserveWasDown = courseActive ? reserveDown : false
             marioLWasDown = lDown
             marioRWasDown = rDown
         } else {
             marioR3WasDown = input.hostR3
-            marioUpWasDown = false
+            marioReserveWasDown = false
             marioLWasDown = input.buttons & ZKButton.l != 0
             marioRWasDown = input.buttons & ZKButton.r != 0
         }

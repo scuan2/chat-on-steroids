@@ -1,36 +1,34 @@
+diff --git a/crates/zakuro-gpu/src/raster.rs b/crates/zakuro-gpu/src/raster.rs
+index fc37bb5..6f0168b 100644
 --- a/crates/zakuro-gpu/src/raster.rs
 +++ b/crates/zakuro-gpu/src/raster.rs
-@@ -778,7 +778,8 @@ const MARIO_HUD_RESERVE: u32 = 2;
- const MARIO_HUD_MEDALS: u32 = 4;
- const MARIO_HUD_LEVEL: u32 = 8;
- const MARIO_HUD_ALL: u32 =
-     MARIO_HUD_LIVES | MARIO_HUD_RESERVE | MARIO_HUD_MEDALS | MARIO_HUD_LEVEL;
+@@ -780,7 +780,7 @@ const MARIO_HUD_LEVEL: u32 = 8;
+ // The reserve-item draw is dynamic and can be absent/reclassified independently
+ // of the stable course HUD. Do not make controller item input depend
+ // on that lower-screen draw being recognized in the same frame.
+-const MARIO_HUD_ALL: u32 = MARIO_HUD_LIVES | MARIO_HUD_MEDALS | MARIO_HUD_LEVEL;
 +const MARIO_HUD_RECENT_FRAMES: u8 = 8;
  
  #[derive(Default)]
  struct MarioCourseUiDraw {
-@@ -1928,6 +1929,8 @@ pub struct Resources {
+@@ -1930,6 +1930,8 @@ pub struct Resources {
      pub(crate) hardware: Option<hardware::Hardware>,
      /// Course-HUD draw signatures seen since the last title frame completed.
      mario_hud_parts: u32,
-+    /// How recently each exact course-HUD signature was seen, in completed title frames.
-+    mario_hud_recent: [u8; 4],
++    /// Recent frames in which each stable course-HUD signature appeared.
++    mario_hud_recent: [u8; 3],
      /// Whether the last completed title frame was a Mario course frame.
      mario_hud_active: bool,
      /// Pause-menu rows seen since the last title frame completed.
-@@ -1940,7 +1943,24 @@ pub struct Resources {
+@@ -1942,7 +1944,20 @@ pub struct Resources {
  
  impl Resources {
      pub(crate) fn mario_hud_frame_done(&mut self) {
 -        self.mario_hud_active = self.mario_hud_parts & MARIO_HUD_ALL == MARIO_HUD_ALL;
-+        // Mario can split the four lower-screen course widgets across nearby
-+        // completed frames on the host-GPU path. Keep the detector strict — all
-+        // four exact signatures are still required — but do not require them to
-+        // land in the same frame. The short window also drains immediately after
-+        // leaving a course, so unrelated menu draws cannot keep the overlay alive.
++        // The level, lives and medal draws form the stable course-HUD signature.
++        // reserve-item draw is dynamic and is not required to identify a course.
 +        for (recent, part) in self.mario_hud_recent.iter_mut().zip([
 +            MARIO_HUD_LIVES,
-+            MARIO_HUD_RESERVE,
 +            MARIO_HUD_MEDALS,
 +            MARIO_HUD_LEVEL,
 +        ]) {

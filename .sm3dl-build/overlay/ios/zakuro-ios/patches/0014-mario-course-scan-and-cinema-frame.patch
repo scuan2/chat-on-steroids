@@ -1,16 +1,17 @@
 diff --git a/crates/zakuro-gpu/src/raster.rs b/crates/zakuro-gpu/src/raster.rs
-index ab16270..5c742c9 100644
+index 6f0168b..7d4449f 100644
 --- a/crates/zakuro-gpu/src/raster.rs
 +++ b/crates/zakuro-gpu/src/raster.rs
-@@ -779,7 +779,6 @@ const MARIO_HUD_MEDALS: u32 = 4;
- const MARIO_HUD_LEVEL: u32 = 8;
- const MARIO_HUD_ALL: u32 =
-     MARIO_HUD_LIVES | MARIO_HUD_RESERVE | MARIO_HUD_MEDALS | MARIO_HUD_LEVEL;
+@@ -780,7 +780,7 @@ const MARIO_HUD_LEVEL: u32 = 8;
+ // The reserve-item draw is dynamic and can be absent/reclassified independently
+ // of the stable course HUD. Do not make controller item input depend
+ // on that lower-screen draw being recognized in the same frame.
 -const MARIO_HUD_RECENT_FRAMES: u8 = 8;
++const MARIO_HUD_ALL: u32 = MARIO_HUD_LIVES | MARIO_HUD_MEDALS | MARIO_HUD_LEVEL;
  
  #[derive(Default)]
  struct MarioCourseUiDraw {
-@@ -896,6 +895,71 @@ fn mario_course_ui_draw(
+@@ -897,6 +897,71 @@ fn mario_course_ui_draw(
      MarioCourseUiDraw::default()
  }
  
@@ -82,27 +83,21 @@ index ab16270..5c742c9 100644
  /// where each varying the rasterizer needs lives in the shader's output registers, as GPUREG_SH_OUTMAP_O* describes it
  #[derive(Debug, Clone, Copy)]
  struct OutputMap {
-@@ -1929,8 +1993,6 @@ pub struct Resources {
+@@ -1930,8 +1995,6 @@ pub struct Resources {
      pub(crate) hardware: Option<hardware::Hardware>,
      /// Course-HUD draw signatures seen since the last title frame completed.
      mario_hud_parts: u32,
--    /// How recently each exact course-HUD signature was seen, in completed title frames.
--    mario_hud_recent: [u8; 4],
+-    /// Recent frames in which each stable course-HUD signature appeared.
+-    mario_hud_recent: [u8; 3],
      /// Whether the last completed title frame was a Mario course frame.
      mario_hud_active: bool,
      /// Pause-menu rows seen since the last title frame completed.
-@@ -1943,24 +2005,7 @@ pub struct Resources {
- 
- impl Resources {
+@@ -1946,18 +2009,7 @@ impl Resources {
      pub(crate) fn mario_hud_frame_done(&mut self) {
--        // Mario can split the four lower-screen course widgets across nearby
--        // completed frames on the host-GPU path. Keep the detector strict — all
--        // four exact signatures are still required — but do not require them to
--        // land in the same frame. The short window also drains immediately after
--        // leaving a course, so unrelated menu draws cannot keep the overlay alive.
+         // The level, lives and medal draws form the stable course-HUD signature.
+         // reserve-item draw is dynamic and is not required to identify a course.
 -        for (recent, part) in self.mario_hud_recent.iter_mut().zip([
 -            MARIO_HUD_LIVES,
--            MARIO_HUD_RESERVE,
 -            MARIO_HUD_MEDALS,
 -            MARIO_HUD_LEVEL,
 -        ]) {
@@ -117,7 +112,7 @@ index ab16270..5c742c9 100644
          self.mario_pause_active =
              self.mario_pause_rows == 7 || (self.mario_pause_active && self.mario_pause_dialog);
          self.mario_hud_parts = 0;
-@@ -3510,8 +3555,12 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
+@@ -3507,8 +3559,12 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
          // Mario shares the 240x400 target between both LCDs. Its lower LCD
          // is a 320-row viewport inside that target: keep its geometry at the
          // native width and let the hardware backend center it by the margin.
@@ -132,7 +127,7 @@ index ab16270..5c742c9 100644
              && buffer_height == 400
              && (viewport_height - 320.0).abs() < 0.5;
          if lower {
-@@ -3693,6 +3742,9 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
+@@ -3690,6 +3746,9 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
          #[cfg(feature = "vulkan")]
          Vertices::Raw { .. } => return None,
      };

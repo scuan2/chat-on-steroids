@@ -475,7 +475,7 @@ diff --git a/crates/zakuro-gpu/src/raster.rs b/crates/zakuro-gpu/src/raster.rs
 index 4c6f1b7..0ed9214 100644
 --- a/crates/zakuro-gpu/src/raster.rs
 +++ b/crates/zakuro-gpu/src/raster.rs
-@@ -717,6 +717,184 @@ impl Vertex {
+@@ -717,6 +717,186 @@ impl Vertex {
      }
  }
  
@@ -539,8 +539,10 @@ index 4c6f1b7..0ed9214 100644
 +const MARIO_HUD_RESERVE: u32 = 2;
 +const MARIO_HUD_MEDALS: u32 = 4;
 +const MARIO_HUD_LEVEL: u32 = 8;
-+const MARIO_HUD_ALL: u32 =
-+    MARIO_HUD_LIVES | MARIO_HUD_RESERVE | MARIO_HUD_MEDALS | MARIO_HUD_LEVEL;
++// The reserve-item draw is dynamic and can be absent/reclassified independently
++// of the stable course HUD. Do not make controller item input depend
++// on that lower-screen draw being recognized in the same frame.
++const MARIO_HUD_ALL: u32 = MARIO_HUD_LIVES | MARIO_HUD_MEDALS | MARIO_HUD_LEVEL;
 +
 +#[derive(Default)]
 +struct MarioCourseUiDraw {
@@ -660,7 +662,7 @@ index 4c6f1b7..0ed9214 100644
  /// where each varying the rasterizer needs lives in the shader's output registers, as GPUREG_SH_OUTMAP_O* describes it
  #[derive(Debug, Clone, Copy)]
  struct OutputMap {
-@@ -1748,9 +1926,36 @@ pub struct Resources {
+@@ -1748,9 +1928,36 @@ pub struct Resources {
      /// the host GPU, when draws go to it instead of the software path
      #[cfg(feature = "vulkan")]
      pub(crate) hardware: Option<hardware::Hardware>,
@@ -697,7 +699,7 @@ index 4c6f1b7..0ed9214 100644
      /// do draws hand their vertex work to other threads (see Gpu::scout), on the host's GPU while the CPU shades
      pub(crate) fn hands_out(&self) -> bool {
          #[cfg(feature = "vulkan")]
-@@ -3279,6 +3484,26 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
+@@ -3279,6 +3486,26 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
      let viewport_top = (viewport_y + viewport_height).round() as i32;
      let (buffer_width, buffer_height) = buffer_size(registers, viewport);
      let (target_width, target_height) = (buffer_width, buffer_height);
@@ -724,7 +726,7 @@ index 4c6f1b7..0ed9214 100644
      // drawing stays inside the viewport, its rows flipped on an upside down buffer
      let (bottom, top) = ((viewport_y.round() as i32).max(0), viewport_top.min(buffer_height as i32));
      let (bottom, top) = match upside_down(registers) {
-@@ -3379,7 +3604,9 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
+@@ -3379,7 +3606,9 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
              Vertices::Raw { vertex_shader, raw, order } => Some((vertex_shader, hardware::Inputs::Raw(raw), None, Some(order))),
              Vertices::Shaded(_) | Vertices::Prepared(_) => None,
          };
@@ -735,7 +737,7 @@ index 4c6f1b7..0ed9214 100644
              // GPUREG_PRIMITIVE_CONFIG bits 9 to 8, 0 = triangle list, 1 = strip, 2 = fan,
              // 3 = whatever the geometry shader emitted, which is a list
              let topology = (registers[REG_PRIMITIVE_CONFIG] >> 8) & 0x3;
-@@ -3423,6 +3650,19 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
+@@ -3423,6 +3652,19 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
          #[cfg(feature = "vulkan")]
          Vertices::Raw { .. } => return None,
      };
