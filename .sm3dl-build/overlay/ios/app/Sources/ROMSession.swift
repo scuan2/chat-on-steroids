@@ -358,6 +358,7 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
     private var marioRuntimeActive = false
     private var marioR3WasDown = false
     private var marioUpWasDown = false
+    private var marioTouchOverlayVisible = false
     private var marioTouchCursorX: Float = 0.5
     private var marioTouchCursorY: Float = 0.5
 
@@ -1830,6 +1831,7 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         marioRuntimeActive = false
         marioR3WasDown = false
         marioUpWasDown = false
+        marioTouchOverlayVisible = false
         marioTouchCursorX = 0.5
         marioTouchCursorY = 0.5
         if let presenter = framePresenter {
@@ -1939,6 +1941,7 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         marioRuntimeActive = launch.entry.titleID == Self.mario3DLandUSA
         marioR3WasDown = false
         marioUpWasDown = false
+        marioTouchOverlayVisible = false
         marioTouchCursorX = 0.5
         marioTouchCursorY = 0.5
         system = handle
@@ -2405,6 +2408,7 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
             let frontendTouchActive = zk_mario_frontend_touch_active(system) != 0
 
             if courseActive {
+                marioTouchOverlayVisible = false
                 // D-pad Up is the reserve-item shortcut only while the course HUD
                 // is active. Synthesize one tap on Nintendo's native reserve slot,
                 // consume Up for that course frame, and leave every other button
@@ -2416,35 +2420,44 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
                     input.touchY = 131
                 }
             } else if frontendTouchActive {
-                // Mario's front-end uses the second LCD for world tabs, profile
-                // selection and other touch-only controls. Outside courses, turn
-                // the otherwise-unused host right stick into a small lower-screen
-                // cursor and R3 into one native touchscreen tap. Left stick,
-                // D-pad and face buttons still go straight to the game.
-                let deadzone: Float = 0.18
-                let speed: Float = 0.018
-                let cursorDelta: (Float) -> Float = { value in
-                    let magnitude = abs(value)
-                    guard magnitude > deadzone else { return 0 }
-                    let scaled = (magnitude - deadzone) / (1 - deadzone)
-                    return (value < 0 ? -1 : 1) * scaled * speed
-                }
-                marioTouchCursorX = min(max(
-                    marioTouchCursorX + cursorDelta(input.cStickX), 0), 1)
-                marioTouchCursorY = min(max(
-                    marioTouchCursorY - cursorDelta(input.cStickY), 0), 1)
-                input.cStickX = 0
-                input.cStickY = 0
-
                 if let presenter = framePresenter {
-                    _ = zk_presenter_set_mario_touch_cursor(
-                        presenter, marioTouchCursorX, marioTouchCursorY)
+                    if r3Down && !marioR3WasDown {
+                        marioTouchOverlayVisible =
+                            zk_presenter_toggle_mario_touch_overlay(presenter) == 1
+                    }
+
+                    if marioTouchOverlayVisible {
+                        // Only while the player has explicitly opened the lower
+                        // screen: right stick moves its cursor and A taps it.
+                        // Left stick/D-pad remain native so world-map level
+                        // traversal continues to work at the same time.
+                        let deadzone: Float = 0.18
+                        let speed: Float = 0.018
+                        let cursorDelta: (Float) -> Float = { value in
+                            let magnitude = abs(value)
+                            guard magnitude > deadzone else { return 0 }
+                            let scaled = (magnitude - deadzone) / (1 - deadzone)
+                            return (value < 0 ? -1 : 1) * scaled * speed
+                        }
+                        marioTouchCursorX = min(max(
+                            marioTouchCursorX + cursorDelta(input.cStickX), 0), 1)
+                        marioTouchCursorY = min(max(
+                            marioTouchCursorY - cursorDelta(input.cStickY), 0), 1)
+                        input.cStickX = 0
+                        input.cStickY = 0
+                        _ = zk_presenter_set_mario_touch_cursor(
+                            presenter, marioTouchCursorX, marioTouchCursorY)
+
+                        if input.buttons & ZKButton.a != 0 && !input.touch {
+                            input.buttons &= ~ZKButton.a
+                            input.touch = true
+                            input.touchX = UInt16((marioTouchCursorX * 319).rounded())
+                            input.touchY = UInt16((marioTouchCursorY * 239).rounded())
+                        }
+                    }
                 }
-                if r3Down && !marioR3WasDown && !input.touch {
-                    input.touch = true
-                    input.touchX = UInt16((marioTouchCursorX * 319).rounded())
-                    input.touchY = UInt16((marioTouchCursorY * 239).rounded())
-                }
+            } else {
+                marioTouchOverlayVisible = false
             }
 
             marioR3WasDown = r3Down

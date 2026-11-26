@@ -805,11 +805,6 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
         && system.mario_pause_active();
     presenter.presenter.set_mario_course_hud(mario_course_hud);
     presenter.presenter.set_mario_pause_overlay(mario_pause);
-    presenter.presenter.set_mario_frontend_touch_overlay(
-        system.kernel.program_id == MARIO_3D_LAND_USA_PROGRAM_ID
-            && !mario_course_hud
-            && !mario_pause,
-    );
 
     if !presenter.logged_mode {
         presenter.logged_mode = true;

@@ -26,10 +26,10 @@ index 8e974f0..4b334b9 100644
          } else {
              let (width_f, height_f) = (width as f32, height as f32);
 +            // The lower LCD shares Mario's widened render target. The first
-+            // on-device recovery still left a 24-pixel blue strip at 2x inset
-+            // scale, i.e. 12 native pixels, so carry that measured bias left too.
++            // on-device recovery still needed another left correction. Keep the
++            // same source width and move it 24 more native pixels left.
 +            let mario_bias = if self.wide_margin != 0 {
-+                self.wide_margin.saturating_add(12)
++                self.wide_margin.saturating_add(36)
 +            } else {
 +                0
 +            };

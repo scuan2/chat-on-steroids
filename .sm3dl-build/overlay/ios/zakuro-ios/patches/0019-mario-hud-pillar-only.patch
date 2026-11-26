@@ -1,0 +1,164 @@
+diff --git a/crates/zakuro-gpu/shaders/present.frag b/crates/zakuro-gpu/shaders/present.frag
+index 40200cb..6d97422 100644
+--- a/crates/zakuro-gpu/shaders/present.frag
++++ b/crates/zakuro-gpu/shaders/present.frag
+@@ -81,21 +81,11 @@ void main() {
+ #else
+     vec3 rgb = shown(screen, crop.area, crop.bounds);
+     if (crop.mode == 3) {
+-        // Each 36x36 crop is one native collected/uncollected Star Medal cell.
+-        // Keep Nintendo's green uncollected-state pixels; only fade the extreme
+-        // square corners so the cell sits cleanly on the black phone pillar.
+-        float radius = length(uv * 2.0 - 1.0);
+-        float alpha = 1.0 - smoothstep(0.96, 1.0, radius);
+-        colour = vec4(rgb * alpha, alpha);
++        // A complete native Star Medal cell from the real lower screen.
++        colour = vec4(rgb, 1.0);
+     } else if (crop.mode == 4) {
+-        // The reserve item is a live 3D model. Keep the proven native crop/key
+-        // that preserves Mario's real white face/eyes and removes only the slot.
+-        float radius = length(uv * 2.0 - 1.0);
+-        vec3 slot = vec3(0.58, 0.69, 0.72);
+-        float slot_distance = length(rgb - slot);
+-        float alpha = smoothstep(0.105, 0.235, slot_distance)
+-            * (1.0 - smoothstep(0.90, 1.0, radius));
+-        colour = vec4(rgb * alpha, alpha);
++        // A complete native reserve-item cell from the real lower screen.
++        colour = vec4(rgb, 1.0);
+     } else if (crop.mode == 5) {
+         // Host controller cursor for the real lower touchscreen: black outer
+         // edge plus a white inner band so it remains visible over any menu art.
+diff --git a/crates/zakuro-gpu/shaders/present.frag.spv b/crates/zakuro-gpu/shaders/present.frag.spv
+index 8e9e9cc634bda3c4aa5c6efa7608310636e72edc..88db164077ba9a94810c91034e46d12ef7b3f1bd 100644
+GIT binary patch
+delta 1654
+zcmYk5%TH5L5XMh$TZ+(Hu^<+eg7`p9NJxx{@rhfFDY{_ciYQSc+63*&#a$RyCMKjS
+z-Mi48VPj(a4>WGwDA)H3pQzvi_4{4Uxj84D&V1j@nKN_lnMZpUcNWq?U(T46X*C72
+zZMtwg72O`~42C0P%*onBtv+c?)@002;mOfc<Mj*6SUXIuesN6h*q;?XQ=1qQjB$(b
+z<oNm1%Q$O_jluMlR5WuheK!bulyFv_w4_C{$KuFxJA`{>zm;Sp4u6-OwYW+8w?yk8
+zesD^MR;JD#aJWhM`n7U`R|y}x)4e?*+C*GxA4qV!@PqqD65P?anL9B=@4BP7%mHb7
+z_c6WunBIL{Y}{y`4PR;Fq6y4n>3u3VFa1>VP%^BxXyBRUq!RAA<&-qxURW-WuIel<
+z@uh_Q#N!{4?AH}X((-lb69(pq07X#DkPba0{kqZCS_<D_Np6YVCH+nU$2V9|nmK9K
+zFO`n(z2vKeY}l@)53>E1J_^IJT$`U{!+9+oHJ>f%_w+>^3D|(&?+G6*Q5Z!~jB9D0
+zmd<?>GcR#1{g4gEGoqzMX%;QvTafgrCbD7EQYrQuQ<lD}s{#M99M7+6xuwRmF7dDR
+zE=lM0Mfs-xBs9uZ<L8_3qTo4!m_Pw=dD9%@v@m-HB|K{SCg!qEBR*p};>bs^xG+hW
+z6X7Rp7S=CLcvzarAjTzJA)7;pBOy;3&K1}yn*<K$WfSA}7i5p<e1l`kR=H9(8*!49
+zxqx#?R?GH_ED7ru7s;qHoy55KHM0HqPGSAxcqX?a)E_~vs<pD|ia=LXSvCjZqo|@Z
+zoI9jTHe6K~&4{j(4d=wgtrtf_JPP7A$PNj{;extl6XYI#MK*yf$Mska+Ht*>^JihB
+zIQA2dpWHMMX&*k#LKr`3o-fasBB*SWY=0s*3&XM8fm<vG?YOO$^NZ*g$A04RbGxpH
+V{!}HdA}NCT@+Wj|W_Meq@E`Czv3&pl
+
+delta 2665
+zcmZ9NOKeqD6o&V`ePP?HV5_x0C<Wit3W60Yr7gY%wWShc9GC{EG&U4zJJG?7F-$bk
+zn2vPH%$Z@LapufK<FHN?>I)wg-%=hvzVF<#nv>p~mA(Fd{d?`b&szK3<?WyEtkjh^
+zHKkNaEvb^8daE*4T6%B1qg*|eQaUz%aB^-YrG`|Wz5|a>9X&kGC|+VbFg-OrcdUjl
+zt<slEDa}kx&qAYbOiej{?%?Fi?D&xbhcdoCwZa$k-UMdd{*{F{Lrl-j9%7wr;Vt09
+z(^JmR@ZC<BJo0=EH>CdgkIS!@mQL=k`><Ty%uXALEE-K|DDWA;n;*>$ZXo^>ejV0~
+z-IrreC#SxfaT%-6vH9v)bn&J3!N^w+UO2I31vh|~Mt4*Pdsx1e35^g=QfM$HR`3U!
+z7X|`f4qiBMbXVYY;E9QeEO9q^y1@;Fjr4%Kj=!+7@K*3UZ+GT+8z+L;_x}17!A|hY
+z?Y%2_5d7&Udspz#{0EKCX4R)FviH%;X!VQOY6pG|-)aX|Z?%iqDi^U;E@F#Zz#EfQ
+zE)dBo7jggm{-#sazgTKHmD3lD0~Dx@@if+ny}^4De}$dK7O|0>`x^i0++NMOZ@_Ae
+zwNf?9{4K`9X*Xtk7fs>CkY~MWCi)&A*_zg5_y>F^ZN<)DE~LhVO!{NasWYMPR?Y+1
+zDnDbN<yie$OpOOJ{tKq&Y^v5KDf$&tG@38+8@@t+!TpXe=jMX@Bj?JDBfMcR!JnA(
+z)f+dr8}(8cJI@>cl5u%0jwKjoQD4#D^RKLHtDe)t-i7UBJdeqFht84aBBQ?xoY&X|
+zY(0Cjkor-`fAEWi{1+^@h(#g)!(UZMUJA(+8;nYp;CQla>UbWTSYF=-_Krpo*5F4G
+zeCd~g)mTJvGrk)6Sfd5Ml*Vd{C@`@%!GMV^)D`%0(JgE7d9rTtW8eosP3W)0zcl}1
+zOGnjDfoGM8UTV*|Hpb(5>94{!t1)-r-II%>U5y_{b4MLuHPK(!;H#03U38XcHbv1l
+z*WxSm7u<C@Cmr1NIalnj8{nL;-Z;s#joM$v>@S<dhOjYe?L}R?07C?ZF?ZI@xB*T+
+zx@{xAoF7WN?M6m_cAK$H*b|t^_08jF;%59}x7`AkTO^is8|$ZAAy&0px(!aTvFL=`
+z@p-atGj19D<jKb?y#rq^8le}TCu@Wr9M@43rLNwYlL}4fH&ZSW-i2RGxDCvcCEVi(
+zP!kEa<GYAD^ZCh@i+p|fu94$vx(A>r670Y?fqXRIz4%TvW>UY~a*=cZzqrX=V4iG~
+z{#E(+q$c#k_%(gC_I2G2!IMq!ziS9n6q~vq-%Y8DO+A3`LdM)wKcieM@*uw42shNr
+z{SdxfSf;c74?}vQxGIm}E0&LBkK(I|8}JyuI)B0K$vNrZ_U2siraTVkeDzfYCieth
+z6@y+CJKS!ztKEbrcoN?`9?3_*a{huF%{l4d_T^l06Jv19?@LZl;OmV|7%XnW%@ptN
+L#gorex+?zzt8oHS
+
+diff --git a/crates/zakuro-gpu/src/backend/vulkan.rs b/crates/zakuro-gpu/src/backend/vulkan.rs
+index 9972b8d..997ffe2 100644
+--- a/crates/zakuro-gpu/src/backend/vulkan.rs
++++ b/crates/zakuro-gpu/src/backend/vulkan.rs
+@@ -917,49 +917,48 @@ impl VulkanPresenter {
+                     let h = game.height;
+                     let pillar_left = game.x + game.width;
+                     let pillar_width = (self.extent.width as f32 - pillar_left).max(0.0);
+-                    let margin = (h * 0.012).max(pillar_width * 0.08);
+-                    let medal_gap = h * 0.006;
+-                    let medal_d = h * 0.052;
++                    // This HUD only exists in the real black phone pillar. Never
++                    // fall back onto Mario's game image. Size the four native
++                    // lower-screen cells to whatever width the pillar actually has.
++                    let margin = (h * 0.008).max(pillar_width * 0.06);
++                    let medal_gap = (h * 0.004).max(3.0);
++                    let usable = (pillar_width - 2.0 * margin).max(0.0);
++                    let medal_d = ((usable - 2.0 * medal_gap) / 3.0)
++                        .min(h * 0.050)
++                        .max(0.0);
+                     let medal_row_w = medal_d * 3.0 + medal_gap * 2.0;
+-                    let reserve_d = h * 0.112;
++                    let reserve_d = usable.min(h * 0.105).max(0.0);
+                     let top = game.y + h * 0.035;
+-                    let gap = h * 0.012;
+-                    let widest = medal_row_w.max(reserve_d);
+-                    let hud_center_x = if pillar_width >= widest + 2.0 * margin {
+-                        pillar_left + pillar_width / 2.0
+-                    } else {
+-                        // Exact-16:9 displays have no pillar. Keep the same
+-                        // compact stack just inside the game edge as a fallback.
+-                        game.x + game.width - h * 0.012 - widest / 2.0
+-                    };
+-
+-                    // Draw each medal separately. The native status strip's
+-                    // coloured rectangle never enters the final composite.
+-                    for (index, source_x) in [105.0f32, 141.0, 177.0].into_iter().enumerate() {
+-                        let x = hud_center_x - medal_row_w / 2.0
+-                            + index as f32 * (medal_d + medal_gap);
++                    let vertical_gap = h * 0.012;
++
++                    if medal_d >= h * 0.025 && reserve_d >= h * 0.050 {
++                        let hud_center_x = pillar_left + pillar_width / 2.0;
++                        for (index, source_x) in [105.0f32, 141.0, 177.0].into_iter().enumerate() {
++                            let x = hud_center_x - medal_row_w / 2.0
++                                + index as f32 * (medal_d + medal_gap);
++                            draw_hud(
++                                device,
++                                command_buffer,
++                                Viewport { x, y: top, width: medal_d, height: medal_d },
++                                subcrop(source_x, 3.5, 36.0, 36.0),
++                                3,
++                            );
++                        }
+                         draw_hud(
+                             device,
+                             command_buffer,
+-                            Viewport { x, y: top, width: medal_d, height: medal_d },
+-                            subcrop(source_x, 3.5, 36.0, 36.0),
+-                            3,
++                            Viewport {
++                                x: hud_center_x - reserve_d / 2.0,
++                                y: top + medal_d + vertical_gap,
++                                width: reserve_d,
++                                height: reserve_d,
++                            },
++                            // Slightly wider than before so the live reserve slot
++                            // cannot clip the item at its source edge.
++                            subcrop(116.0, 87.0, 88.0, 88.0),
++                            4,
+                         );
+                     }
+-                    draw_hud(
+-                        device,
+-                        command_buffer,
+-                        Viewport {
+-                            x: hud_center_x - reserve_d / 2.0,
+-                            y: top + medal_d + gap,
+-                            width: reserve_d,
+-                            height: reserve_d,
+-                        },
+-                        // Tight around the live 3D power-up, deliberately inside
+-                        // Nintendo's original white/yellow touchscreen ring.
+-                        subcrop(121.0, 92.0, 78.0, 78.0),
+-                        4,
+-                    );
+                 }
+             }
+ 
