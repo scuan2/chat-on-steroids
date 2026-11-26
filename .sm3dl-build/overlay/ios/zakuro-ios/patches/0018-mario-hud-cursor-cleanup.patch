@@ -136,7 +136,7 @@ zK|6OSaJ3D1SRC`w6K8D_r2&c2fb>m7lh7=l`4RbK?u&N`!|^!R9XM#`dIDFQM6WpJ
 YqbE*fJqcn;qB+ijB(`j!r=>Id4}3YXR{#J2
 
 diff --git a/crates/zakuro-gpu/src/backend/vulkan.rs b/crates/zakuro-gpu/src/backend/vulkan.rs
-index 8476461..4c70c13 100644
+index 8476461..9972b8d 100644
 --- a/crates/zakuro-gpu/src/backend/vulkan.rs
 +++ b/crates/zakuro-gpu/src/backend/vulkan.rs
 @@ -143,9 +143,11 @@ pub struct VulkanPresenter {
@@ -153,20 +153,15 @@ index 8476461..4c70c13 100644
      /// set when the swapchain no longer matches the window
      stale: bool,
  }
-@@ -434,7 +436,11 @@ impl VulkanPresenter {
-             stereo: Stereo::default(),
+@@ -435,6 +437,7 @@ impl VulkanPresenter {
              mario_course_hud: false,
              mario_pause_overlay: false,
--            mario_touch_overlay: false,
-+            // Mario's front-end genuinely uses the lower LCD for file/profile
-+            // selection and world controls, so surface it by default whenever a
-+            // course/pause screen is not taking ownership of the lower LCD.
-+            mario_touch_overlay: true,
+             mario_touch_overlay: false,
 +            mario_touch_cursor: (0.5, 0.5),
              stale: false,
          };
  
-@@ -916,11 +922,11 @@ impl VulkanPresenter {
+@@ -916,11 +919,11 @@ impl VulkanPresenter {
                      let pillar_width = (self.extent.width as f32 - pillar_left).max(0.0);
                      let margin = (h * 0.012).max(pillar_width * 0.08);
                      let medal_gap = h * 0.006;
@@ -182,7 +177,7 @@ index 8476461..4c70c13 100644
                      let widest = medal_row_w.max(reserve_d);
                      let hud_center_x = if pillar_width >= widest + 2.0 * margin {
                          pillar_left + pillar_width / 2.0
-@@ -932,14 +938,14 @@ impl VulkanPresenter {
+@@ -932,14 +935,14 @@ impl VulkanPresenter {
  
                      // Draw each medal separately. The native status strip's
                      // coloured rectangle never enters the final composite.
@@ -199,7 +194,7 @@ index 8476461..4c70c13 100644
                              3,
                          );
                      }
-@@ -998,6 +1004,53 @@ impl VulkanPresenter {
+@@ -998,6 +1001,53 @@ impl VulkanPresenter {
                          &constants,
                      );
                      device.cmd_draw(command_buffer, 3, 1, 0, 0);
@@ -253,36 +248,25 @@ index 8476461..4c70c13 100644
                  }
              }
  
-@@ -1249,16 +1302,28 @@ impl Presenter for VulkanPresenter {
- 
- impl VulkanPresenter {
-     pub fn set_mario_course_hud(&mut self, enabled: bool) {
-+        let was_enabled = self.mario_course_hud;
-         self.mario_course_hud = enabled;
-         if enabled {
-             self.mario_touch_overlay = false;
-+        } else if was_enabled && !self.mario_pause_overlay {
-+            self.mario_touch_overlay = true;
+@@ -1262,6 +1312,17 @@ impl VulkanPresenter {
          }
      }
  
-     pub fn set_mario_pause_overlay(&mut self, enabled: bool) {
-+        let was_enabled = self.mario_pause_overlay;
-         self.mario_pause_overlay = enabled;
-         if enabled {
-             self.mario_touch_overlay = false;
-+        } else if was_enabled && !self.mario_course_hud {
-+            self.mario_touch_overlay = true;
-+        }
++    pub fn set_mario_frontend_touch_overlay(&mut self, enabled: bool) {
++        self.mario_touch_overlay =
++            enabled && !self.mario_course_hud && !self.mario_pause_overlay;
 +    }
 +
 +    pub fn set_mario_touch_cursor(&mut self, x: f32, y: f32) {
 +        if x.is_finite() && y.is_finite() {
 +            self.mario_touch_cursor = (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
-         }
-     }
- 
-@@ -1321,8 +1386,8 @@ impl VulkanPresenter {
++        }
++    }
++
+     fn mario_touch_viewport(&self) -> Option<Viewport> {
+         if !self.mario_touch_overlay
+             || self.mario_course_hud
+@@ -1321,8 +1382,8 @@ impl VulkanPresenter {
          let u = (px - viewport.x) / viewport.width;
          let v = (py - viewport.y) / viewport.height;
          Some((

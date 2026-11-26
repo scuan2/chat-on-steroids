@@ -137,6 +137,7 @@ pub const ZK_LAYOUT_LARGE_TOP_RIGHT: u32 = 5;
 pub const ZK_LAYOUT_HYBRID: u32 = 6;
 pub const ZK_LAYOUT_TOP_FULL_WIDTH: u32 = 7;
 pub const ZK_LAYOUT_CUSTOM: u32 = 8;
+const MARIO_3D_LAND_USA_PROGRAM_ID: u64 = 0x0004_0000_0005_4000;
 
 /// Which way the screens are turned inside the layer: north is the console's
 /// own upright orientation, the other numbers rotate the picture clockwise.
@@ -600,7 +601,9 @@ pub extern "C" fn zk_mario_reserve_input_active(system: *mut c_void) -> i32 {
     let Some(system) = (unsafe { (system as *mut System).as_ref() }) else {
         return 0;
     };
-    (system.mario_course_hud_active() && !system.mario_pause_active()) as i32
+    (system.kernel.program_id == MARIO_3D_LAND_USA_PROGRAM_ID
+        && system.mario_course_hud_active()
+        && !system.mario_pause_active()) as i32
 }
 
 /// Whether Mario is in a front-end state where the real lower touchscreen can
@@ -610,7 +613,9 @@ pub extern "C" fn zk_mario_frontend_touch_active(system: *mut c_void) -> i32 {
     let Some(system) = (unsafe { (system as *mut System).as_ref() }) else {
         return 0;
     };
-    (!system.mario_course_hud_active() && !system.mario_pause_active()) as i32
+    (system.kernel.program_id == MARIO_3D_LAND_USA_PROGRAM_ID
+        && !system.mario_course_hud_active()
+        && !system.mario_pause_active()) as i32
 }
 
 /// Toggles Super Mario 3D Land's temporary lower-touchscreen compatibility
@@ -794,12 +799,17 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
         let logical_width = 240.0 * top_image.width as f32 / top_image.height as f32;
         presenter.presenter.set_top_width(logical_width);
     }
-    presenter
-        .presenter
-        .set_mario_course_hud(system.mario_course_hud_active());
-    presenter
-        .presenter
-        .set_mario_pause_overlay(system.mario_pause_active());
+    let mario_course_hud = system.kernel.program_id == MARIO_3D_LAND_USA_PROGRAM_ID
+        && system.mario_course_hud_active();
+    let mario_pause = system.kernel.program_id == MARIO_3D_LAND_USA_PROGRAM_ID
+        && system.mario_pause_active();
+    presenter.presenter.set_mario_course_hud(mario_course_hud);
+    presenter.presenter.set_mario_pause_overlay(mario_pause);
+    presenter.presenter.set_mario_frontend_touch_overlay(
+        system.kernel.program_id == MARIO_3D_LAND_USA_PROGRAM_ID
+            && !mario_course_hud
+            && !mario_pause,
+    );
 
     if !presenter.logged_mode {
         presenter.logged_mode = true;
