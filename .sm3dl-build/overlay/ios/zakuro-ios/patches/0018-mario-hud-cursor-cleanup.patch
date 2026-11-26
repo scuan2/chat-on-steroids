@@ -1,8 +1,8 @@
 diff --git a/crates/zakuro-gpu/shaders/present.frag b/crates/zakuro-gpu/shaders/present.frag
-index e81d35f..48ba183 100644
+index e81d35f..84ba515 100644
 --- a/crates/zakuro-gpu/shaders/present.frag
 +++ b/crates/zakuro-gpu/shaders/present.frag
-@@ -81,24 +81,33 @@ void main() {
+@@ -81,24 +81,32 @@ void main() {
  #else
      vec3 rgb = shown(screen, crop.area, crop.bounds);
      if (crop.mode == 3) {
@@ -24,19 +24,13 @@ index e81d35f..48ba183 100644
 -        // pale slot interior and keep the model itself. This operates on the
 -        // already high-resolution lower-screen GPU image, not a CPU/upscaled
 -        // screenshot.
--        float radius = length(uv * 2.0 - 1.0);
--        vec3 slot = vec3(0.58, 0.69, 0.72);
--        float slot_distance = length(rgb - slot);
--        float alpha = smoothstep(0.105, 0.235, slot_distance)
--            * (1.0 - smoothstep(0.90, 1.0, radius));
-+        // The reserve model sits on a pale, nearly neutral slot interior. Remove
-+        // that low-chroma backing while retaining the saturated live item.
-+        float hi = max(rgb.r, max(rgb.g, rgb.b));
-+        float lo = min(rgb.r, min(rgb.g, rgb.b));
-+        float chroma = hi - lo;
-+        float pale_neutral = (1.0 - smoothstep(0.10, 0.24, chroma))
-+            * smoothstep(0.52, 0.72, hi);
-+        float alpha = 1.0 - pale_neutral;
++        // The reserve item is a live 3D model. Keep the proven native crop/key
++        // that preserves Mario's real white face/eyes and removes only the slot.
+         float radius = length(uv * 2.0 - 1.0);
+         vec3 slot = vec3(0.58, 0.69, 0.72);
+         float slot_distance = length(rgb - slot);
+         float alpha = smoothstep(0.105, 0.235, slot_distance)
+             * (1.0 - smoothstep(0.90, 1.0, radius));
          colour = vec4(rgb * alpha, alpha);
 +    } else if (crop.mode == 5) {
 +        // Host controller cursor for the real lower touchscreen: black outer
@@ -52,88 +46,51 @@ index e81d35f..48ba183 100644
          colour = vec4(rgb, 1.0);
      }
 diff --git a/crates/zakuro-gpu/shaders/present.frag.spv b/crates/zakuro-gpu/shaders/present.frag.spv
-index 72c27b35e487976884b2423863f2b77da6f0f7a5..febf30517c429ec9f99766fca933a3a2d56468b5 100644
+index 72c27b35e487976884b2423863f2b77da6f0f7a5..b85ce8758e0bbd13e2a952bc599eaa54dcb4a60c 100644
 GIT binary patch
-literal 8256
-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
-H{|5RWAvNKR
+delta 2966
+zcmZ9NNpKZa6o&h~kPzX;fk8nOh&Z4Of&wC#2^_*8Bp~8|;)5h4MJk~nlvP?~FDzVG
+zmL-)HY}v81*tmBK<&u>GiW8tHDi9pMuhZw*m99Ro|NlSdo_qS<bNhX=;$mx4U3tOe
+zBq=3Rlcr?P(WdRCu}`Zr%V|S$E=iJo2YY*mcJHa~-9Iq24_=>4O8($k9X!xq&G{J5
+zy~BgUhYybXZ!0Cq!D`RI;X~v6PWYk0;Ss_Z-;m7A`R<;9LnGCpy}fy!d(mroyP4?8
+z35lMD4<8=sWuB~%R(SvLpyM;X-uUr4;q^%;{O$gMkzQV4sAu$2`MuKEse!uB%jtPW
+z96xrfbrG{PfWO1eoc^dyz8HK3D`Vlm3hwLsplv?>o8UTZ3br=qE`gfy%{=Rwc~Z{J
+zKNZf^p65%GyAUqCGb5YOfNAivCzjRtboiC-)oqI@uY!LD+%d-Ki^ArBTc(_C34R~^
+z?1=-l7n=v~>+8$%Hk0RZczsg+KfxM=c}MowCT@ctKQ_C@H^8@jHn+w%!rz^-w8meA
+zpE<p`#<#$)FWfbHxuG|;QE07fm6r0fF@k>xw=sh2w=s&`hA49Tp~&rrBDWt3d|F~d
+z6ojO6^yuVsX&Ln<+xsO`cCZ>weF6IdTaLA`b?(X6n0kdA@^3JPCd;t%nEn`l5$yOS
+zSd9M`tbT+!9REFrmS)`+1AjoAIPs5Y>M`*pa7=6x{gL!C*usp7oIiohX%|N^KZDhe
+zB<XlHzd#hPVlnVn@Wf)Sp{YkPzk#C|bLfv^eg|8SF|8a3zaVN+#C7nwl%MzWCAk6K
+ziRo~F9i!#|+x`}2L6P83urVJqUjJX1G3pWXH`ti&e2#y>#(AmnWlNHOF-6}b0wro5
+z{4Vy~171Qif${oHZlNA{ePcv_1-75ca9462ybj#XvjelRW}cJK(9`53L8}lN5ET7d
+z+#qQqPp?}xAb2vi7&E!pMAPw40ng^?D#$BvHNP@lxz+@BWi?mZxZBYxCDvbOg`RXJ
+z?f`RVRU6>jc~I5G9#X$PPVSQ54UR35-vc+sN#wJ@#;C^}v%%ci9J5l8i9PK)V&Cou
+zt5uT5tgyLY?(9hVne)?TOvKLzTWG{LgSoSKKYPBpG0|%e<XUQAbnF7K6X~=lKRIgg
+zwhw~iZC$O0;KoD)J`6TSJqmjSY)tgkLa=dOXleF#kLIF!1U{B)#Rgo2W&-2&o7_Te
+zKz%l#ePfT<E75>U!0p6zU>4TQb1B*q_dgnN8G@q!3O3*qJiTl{eao?3n90Q^vXNGR
+ziw(FEu2yWoRq%-o_!Qbo_g`l;$7(Ql)*J@-c7EyAV@cP7)nc!o0dr@2y$0Y!#>8H?
+z<eG8j^PfV^eA)SLhZGZbz`3)8n|S&+XiOwr2X+$UOz2;YS`_#!IGcnC?33q=!(#mN
+zV8^4UwdQ*P(SbTmx}K+6B;5oq7P%SDofWwOun{vR;<ti}@m+B4EZ+a=E!bA~KdS0R
+zuqp%NL~H{)kv@y+<f#^uYzM1#@t&Udm%wUa5w`=)7mAbeGT7K1?tcXB1RE45;1#fe
+zUZK63Ys#U$mTSe6@;aL1jn{8(U%->1&y!+<r*^YlZ4th~8(`0PB!3gG<`vrRTvHD1
+ltz0V>QAKmS@%mleC_*1a%*m>-2&*Zc-^S9ZYn8c8{{bu59ee-)
 
-delta 1602
-zcmZ9MxldG46vodiEW(T%AmV~7b{eCJF(zhMY-k}C#>z~9i6q1!3^X>cFg6xO!=FHB
-zVPYt(OiZkeC6&Us;WFYbo7?w$bB~$u^3L4zedoLPo_p?j^Jw7q>1-<5+hCTkX3N^q
-zJJ}0~%Kdy>GD_Q$nN8=%CT2@!b(Xd_!uiRmD|wCJipJ66WN~)7ihpg>Clh9+$>NM?
-z>Fcc_;LBqZrJ4NI(eap1TSmOEJEV0x#COhJN|h3og(s=U$*9Z<W&_6*te3MQyEl~Y
-z?-KqXKP79DoeP-6;Lvw#T$iN-W`0T=manz;`+8~N#rc!}ah-5w<ZS<O?UvELRxg4{
-z2nqVcto&TlV$ShS;l=r>KF5263x&emgNE@zs;4@~NuJP1wH)7+PqiEqr&_f*GxxA@
-zDf*$vx+U$I#+(k-qH$S9&2Fj6;1{xGSy?t5xR>%T2D=`(SHftCWpq?Z^IE2j?YxY5
-zp9)DIz-zxK7QGdK%vfWL-^pjvDcOpQjnJ?Wi@pyWIu@i9a2!DOwU4r=0i$1)q2WNp
-zKgrOnT2!5c=(7ybNZ90ye1tsCeU%SKa?X7VTvFq(Doo>imoXnban>eL8j0A3D*jyK
-zdL)M{7}Tbe=%;KT#?{2S<*&)$?@Dt<<3`}<!Zj_rrIBY-rzf^4>r{qZE52XrZ~3*?
-z`bRi|EX({}|H|KfuN)UKF~8S@IK6SwIGm0SgvY1*=yJc3M)`gvT)_@uX`=W}A(})W
-zBH)`e%hwxkLY#$ZV|W(k+IGo@^WNDlUvJzyd`^5qXk5QnK8aTKy8jjtdgBRvUz{G1
-zH(P7q(A@~V(I%gbh>;ZkIB<U2ee(UZB-t*E#v5?Id^GKmemt`d`G~x+4#-Ey<J`f(
-zK|6OSaJ3D1SRC`w6K8D_r2&c2fb>m7lh7=l`4RbK?u&N`!|^!R9XM#`dIDFQM6WpJ
-YqbE*fJqcn;qB+ijB(`j!r=>Id4}3YXR{#J2
+delta 1582
+zcmZ9M%TJS05XGloON*sd<RRh{#GS@yVho7^#D#7lEZmtiYNJV$5|E7x8)MwKFq-}e
+z>|B@_{siONxMGD+MeC#DTONvfe&r4}G~eW&Idi^y=g!R6#lib0v+<}eWfrp*%i7@w
+z*|Avdajr8OOW3@bP2?_Lo0>FhvV^^npDT=C&1uE2X}we|6sIOO{NG#jQOs<zP`oZ$
+z`lO}G&!et%M(oBe<#X|yvD(bj_>-tqL1cF3i1tkiRArCO=Z1RZe-Mt#(z4UR=WICi
+zy;@gfiQw~oT&GlSbPV}^3Hh_r$2a{Z`L)shp`$u2qjN1Of|n2y^cS<j1L@fT_qWTR
+zogN=_f2aI>K3}e;t_)Kkm9n1XF|8ED{ky^x#C_taEq<mv*F0bPp~#9wHm7w!mulC#
+zAnTUhQz7wR$`)i5*+}4C310|yJ8+Bg(Gtt(s+8unOb6Rp8Sz0Cl2*g(yi#5CRt{vw
+zn(O{MVO}~RtI9YC4F|F5`@o@NLrMY11yo=AD0>!s^h+`{T!{E58JZ<4ZM=l&vkcK_
+zIOK~kLVnJD6^0`@=e`9l(mJAwGdSO6ypNtZdy^=GL~K<Rf1!1yRe%-@>rhJcvwW+w
+zy|fIHJrsLN>#7Wnxm(sYzqImO(|w7p$qpzd8VUABt_wFd@{fGDip(4NS9nV!RTOQ8
+zn4otuCQeU1O#t^{=HS818*}YVXcqP+Q1or`(a=Qvv@jZYKchuBMpLK-0ybuF39vDZ
+z+93?*)6y!er#>xwKzuZ4T;C>4qONb3ucxl(gW~pRe7ZVHfkb#GOhczI2X)9uia!=O
+zzwItzzb#32$w%WOw_6wuyeHNzjK(Kvk1#sj|3A4mkXkl{`vTWEa{I-x0ea$WPNIw)
+zF-DHLVMdr0PyC=TiF*<~)E|<clfClcpq)DuxW**<#AyRVPn^<v62uylAeqhYKuPgE
+Otm}k+o4MGQ%>Dy)cCv&3
 
 diff --git a/crates/zakuro-gpu/src/backend/vulkan.rs b/crates/zakuro-gpu/src/backend/vulkan.rs
 index 8476461..9972b8d 100644
