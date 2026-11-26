@@ -1,8 +1,8 @@
 diff --git a/crates/zakuro-gpu/src/raster/hardware.rs b/crates/zakuro-gpu/src/raster/hardware.rs
-index cd46236..4077566 100644
+index 8e974f0..4b334b9 100644
 --- a/crates/zakuro-gpu/src/raster/hardware.rs
 +++ b/crates/zakuro-gpu/src/raster/hardware.rs
-@@ -5105,7 +5105,13 @@ impl Hardware {
+@@ -6341,7 +6341,13 @@ impl Hardware {
          let native_width = rows * scale;
          let native_height = row_pixels * scale;
          let (width, height) = (upright_width, upright_height);
@@ -17,7 +17,7 @@ index cd46236..4077566 100644
              // Mario's 16:9 path renders a slightly wider host image (428x240
              // logical at 1x, matching the PC recomp), then presents an exact
              // 16:9 center crop. Keeping the extra pixels in the render target
-@@ -5124,15 +5130,21 @@ impl Hardware {
+@@ -6360,15 +6366,26 @@ impl Hardware {
                      (h - 0.5) / h,
                  ],
                  shown,
@@ -28,7 +28,12 @@ index cd46236..4077566 100644
 +            // The lower LCD shares Mario's widened render target. The first
 +            // on-device recovery still left a 24-pixel blue strip at 2x inset
 +            // scale, i.e. 12 native pixels, so carry that measured bias left too.
-+            let first = first.saturating_sub(self.wide_margin.saturating_add(12));
++            let mario_bias = if self.wide_margin != 0 {
++                self.wide_margin.saturating_add(12)
++            } else {
++                0
++            };
++            let first = first.saturating_sub(mario_bias);
              let (left, right) = ((first * scale) as f32, ((first + count) * scale) as f32);
              let (top, bottom) = (((row_pixels - screen.columns) * scale) as f32, (row_pixels * scale) as f32);
              (
@@ -40,7 +45,7 @@ index cd46236..4077566 100644
              )
          };
          Ok(Some(crate::GpuScreen {
-@@ -5140,6 +5152,6 @@ impl Hardware {
+@@ -6376,7 +6393,7 @@ impl Hardware {
              area,
              bounds,
              width: shown_width,
@@ -48,3 +53,4 @@ index cd46236..4077566 100644
 +            height: shown_height,
          }))
      }
+ 
