@@ -358,6 +358,9 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
     private var marioRuntimeActive = false
     private var marioR3WasDown = false
     private var marioUpWasDown = false
+    private var marioLWasDown = false
+    private var marioRWasDown = false
+    private var marioWorldIndex = 0
     private var marioTouchOverlayVisible = false
     private var marioTouchCursorX: Float = 0.5
     private var marioTouchCursorY: Float = 0.5
@@ -1831,6 +1834,9 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         marioRuntimeActive = false
         marioR3WasDown = false
         marioUpWasDown = false
+        marioLWasDown = false
+        marioRWasDown = false
+        marioWorldIndex = 0
         marioTouchOverlayVisible = false
         marioTouchCursorX = 0.5
         marioTouchCursorY = 0.5
@@ -1941,6 +1947,9 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         marioRuntimeActive = launch.entry.titleID == Self.mario3DLandUSA
         marioR3WasDown = false
         marioUpWasDown = false
+        marioLWasDown = false
+        marioRWasDown = false
+        marioWorldIndex = 0
         marioTouchOverlayVisible = false
         marioTouchCursorX = 0.5
         marioTouchCursorY = 0.5
@@ -2404,6 +2413,8 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         if marioRuntimeActive {
             let r3Down = input.hostR3
             let upDown = input.buttons & ZKButton.up != 0
+            let lDown = input.buttons & ZKButton.l != 0
+            let rDown = input.buttons & ZKButton.r != 0
             let courseActive = zk_mario_reserve_input_active(system) != 0
             let frontendTouchActive = zk_mario_frontend_touch_active(system) != 0
 
@@ -2420,6 +2431,31 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
                     input.touchY = 131
                 }
             } else if frontendTouchActive {
+                // Direct world switching. Nintendo's lower-screen world row is
+                // eight equal 40px cells across the native 320px touchscreen.
+                // L/R shoulders step the selected tab directly; no cursor or
+                // visible second screen is required for this action.
+                if !marioTouchOverlayVisible {
+                    input.buttons &= ~(ZKButton.l | ZKButton.r)
+                    if rDown && !marioRWasDown && !lDown && !input.touch {
+                        marioWorldIndex = min(marioWorldIndex + 1, 7)
+                        input.touch = true
+                        input.touchX = UInt16(20 + marioWorldIndex * 40)
+                        input.touchY = 20
+                    } else if lDown && !marioLWasDown && !rDown && !input.touch {
+                        marioWorldIndex = max(marioWorldIndex - 1, 0)
+                        input.touch = true
+                        input.touchX = UInt16(20 + marioWorldIndex * 40)
+                        input.touchY = 20
+                    }
+                }
+
+                // If the player manually taps one of the world tabs while the
+                // lower screen is open, keep the host's direct L/R index synced.
+                if input.touch && input.touchY <= 44 {
+                    marioWorldIndex = min(max(Int(input.touchX) / 40, 0), 7)
+                }
+
                 if let presenter = framePresenter {
                     if r3Down && !marioR3WasDown {
                         marioTouchOverlayVisible =
@@ -2462,9 +2498,13 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
 
             marioR3WasDown = r3Down
             marioUpWasDown = courseActive ? upDown : false
+            marioLWasDown = lDown
+            marioRWasDown = rDown
         } else {
             marioR3WasDown = input.hostR3
             marioUpWasDown = false
+            marioLWasDown = input.buttons & ZKButton.l != 0
+            marioRWasDown = input.buttons & ZKButton.r != 0
         }
 
         // Fast-forward: advance the console-only frames first. They produce no

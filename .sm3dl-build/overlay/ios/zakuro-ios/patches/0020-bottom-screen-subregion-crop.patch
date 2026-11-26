@@ -1,5 +1,5 @@
 diff --git a/crates/zakuro-gpu/src/raster/hardware.rs b/crates/zakuro-gpu/src/raster/hardware.rs
-index 8e974f0..4b334b9 100644
+index 8e974f0..e5cd6ce 100644
 --- a/crates/zakuro-gpu/src/raster/hardware.rs
 +++ b/crates/zakuro-gpu/src/raster/hardware.rs
 @@ -6341,7 +6341,13 @@ impl Hardware {
@@ -29,7 +29,7 @@ index 8e974f0..4b334b9 100644
 +            // on-device recovery still needed another left correction. Keep the
 +            // same source width and move it 24 more native pixels left.
 +            let mario_bias = if self.wide_margin != 0 {
-+                self.wide_margin.saturating_add(36)
++                self.wide_margin.saturating_add(86)
 +            } else {
 +                0
 +            };
