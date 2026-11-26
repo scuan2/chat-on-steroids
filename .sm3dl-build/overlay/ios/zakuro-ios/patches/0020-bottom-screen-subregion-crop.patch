@@ -1,5 +1,5 @@
 diff --git a/crates/zakuro-gpu/src/raster/hardware.rs b/crates/zakuro-gpu/src/raster/hardware.rs
-index cd46236..207428f 100644
+index cd46236..4077566 100644
 --- a/crates/zakuro-gpu/src/raster/hardware.rs
 +++ b/crates/zakuro-gpu/src/raster/hardware.rs
 @@ -5105,7 +5105,13 @@ impl Hardware {
@@ -17,7 +17,7 @@ index cd46236..207428f 100644
              // Mario's 16:9 path renders a slightly wider host image (428x240
              // logical at 1x, matching the PC recomp), then presents an exact
              // 16:9 center crop. Keeping the extra pixels in the render target
-@@ -5124,15 +5130,22 @@ impl Hardware {
+@@ -5124,15 +5130,21 @@ impl Hardware {
                      (h - 0.5) / h,
                  ],
                  shown,
@@ -25,12 +25,11 @@ index cd46236..207428f 100644
              )
          } else {
              let (width_f, height_f) = (width as f32, height as f32);
--            let (left, right) = ((first * scale) as f32, ((first + count) * scale) as f32);
-+            // The lower LCD shares Mario's widened render target. Keep the same
++            // The lower LCD shares Mario's widened render target. Keep its
 +            // 320-pixel window, but move it toward the missing left-side content
-+            // instead of exposing the host-only blue/right margin.
++            // instead of exposing more of the host-only blue/right margin.
 +            let first = first.saturating_sub(self.wide_margin);
-+            let (left, right) = ((first * scale) as f32, ((first + count) * scale) as f32);
+             let (left, right) = ((first * scale) as f32, ((first + count) * scale) as f32);
              let (top, bottom) = (((row_pixels - screen.columns) * scale) as f32, (row_pixels * scale) as f32);
              (
                  [left / width_f, top / height_f, (right - left) / width_f, (bottom - top) / height_f],
@@ -41,7 +40,7 @@ index cd46236..207428f 100644
              )
          };
          Ok(Some(crate::GpuScreen {
-@@ -5140,6 +5148,6 @@ impl Hardware {
+@@ -5140,6 +5152,6 @@ impl Hardware {
              area,
              bounds,
              width: shown_width,
