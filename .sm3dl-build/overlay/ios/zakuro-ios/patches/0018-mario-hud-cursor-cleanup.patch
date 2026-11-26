@@ -1,0 +1,295 @@
+diff --git a/crates/zakuro-gpu/shaders/present.frag b/crates/zakuro-gpu/shaders/present.frag
+index e81d35f..48ba183 100644
+--- a/crates/zakuro-gpu/shaders/present.frag
++++ b/crates/zakuro-gpu/shaders/present.frag
+@@ -81,24 +81,33 @@ void main() {
+ #else
+     vec3 rgb = shown(screen, crop.area, crop.bounds);
+     if (crop.mode == 3) {
+-        // Mario 3D Land course medal: each medal is presented from its own
+-        // square source instead of the original rectangular status strip. A
+-        // soft circular cut keeps only the icon and never exposes strip edges.
+-        float radius = length(uv * 2.0 - 1.0);
+-        float alpha = 1.0 - smoothstep(0.88, 1.0, radius);
++        // Keep Nintendo's actual medal pixels, but remove the lower-screen green
++        // backing before the icon is composited into the black phone pillar.
++        float green_backing = step(0.30, rgb.g)
++            * step(rgb.r * 1.10, rgb.g)
++            * step(rgb.b * 1.05, rgb.g);
++        float alpha = 1.0 - green_backing;
+         colour = vec4(rgb * alpha, alpha);
+     } else if (crop.mode == 4) {
+-        // The reserve item is a live 3D model. The source crop is deliberately
+-        // inside the original white/yellow touch-slot ring; remove the remaining
+-        // pale slot interior and keep the model itself. This operates on the
+-        // already high-resolution lower-screen GPU image, not a CPU/upscaled
+-        // screenshot.
+-        float radius = length(uv * 2.0 - 1.0);
+-        vec3 slot = vec3(0.58, 0.69, 0.72);
+-        float slot_distance = length(rgb - slot);
+-        float alpha = smoothstep(0.105, 0.235, slot_distance)
+-            * (1.0 - smoothstep(0.90, 1.0, radius));
++        // The reserve model sits on a pale, nearly neutral slot interior. Remove
++        // that low-chroma backing while retaining the saturated live item.
++        float hi = max(rgb.r, max(rgb.g, rgb.b));
++        float lo = min(rgb.r, min(rgb.g, rgb.b));
++        float chroma = hi - lo;
++        float pale_neutral = (1.0 - smoothstep(0.10, 0.24, chroma))
++            * smoothstep(0.52, 0.72, hi);
++        float alpha = 1.0 - pale_neutral;
+         colour = vec4(rgb * alpha, alpha);
++    } else if (crop.mode == 5) {
++        // Host controller cursor for the real lower touchscreen: black outer
++        // edge plus a white inner band so it remains visible over any menu art.
++        float radius = length(uv * 2.0 - 1.0);
++        float outer = 1.0 - smoothstep(0.92, 1.0, radius);
++        float hole = 1.0 - smoothstep(0.50, 0.60, radius);
++        float ring = outer * (1.0 - hole);
++        float white_band = smoothstep(0.62, 0.68, radius)
++            * (1.0 - smoothstep(0.80, 0.86, radius));
++        colour = vec4(vec3(white_band) * ring, ring);
+     } else {
+         colour = vec4(rgb, 1.0);
+     }
+diff --git a/crates/zakuro-gpu/shaders/present.frag.spv b/crates/zakuro-gpu/shaders/present.frag.spv
+index 72c27b35e487976884b2423863f2b77da6f0f7a5..febf30517c429ec9f99766fca933a3a2d56468b5 100644
+GIT binary patch
+literal 8256
+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
+H{|5RWAvNKR
+
+delta 1602
+zcmZ9MxldG46vodiEW(T%AmV~7b{eCJF(zhMY-k}C#>z~9i6q1!3^X>cFg6xO!=FHB
+zVPYt(OiZkeC6&Us;WFYbo7?w$bB~$u^3L4zedoLPo_p?j^Jw7q>1-<5+hCTkX3N^q
+zJJ}0~%Kdy>GD_Q$nN8=%CT2@!b(Xd_!uiRmD|wCJipJ66WN~)7ihpg>Clh9+$>NM?
+z>Fcc_;LBqZrJ4NI(eap1TSmOEJEV0x#COhJN|h3og(s=U$*9Z<W&_6*te3MQyEl~Y
+z?-KqXKP79DoeP-6;Lvw#T$iN-W`0T=manz;`+8~N#rc!}ah-5w<ZS<O?UvELRxg4{
+z2nqVcto&TlV$ShS;l=r>KF5263x&emgNE@zs;4@~NuJP1wH)7+PqiEqr&_f*GxxA@
+zDf*$vx+U$I#+(k-qH$S9&2Fj6;1{xGSy?t5xR>%T2D=`(SHftCWpq?Z^IE2j?YxY5
+zp9)DIz-zxK7QGdK%vfWL-^pjvDcOpQjnJ?Wi@pyWIu@i9a2!DOwU4r=0i$1)q2WNp
+zKgrOnT2!5c=(7ybNZ90ye1tsCeU%SKa?X7VTvFq(Doo>imoXnban>eL8j0A3D*jyK
+zdL)M{7}Tbe=%;KT#?{2S<*&)$?@Dt<<3`}<!Zj_rrIBY-rzf^4>r{qZE52XrZ~3*?
+z`bRi|EX({}|H|KfuN)UKF~8S@IK6SwIGm0SgvY1*=yJc3M)`gvT)_@uX`=W}A(})W
+zBH)`e%hwxkLY#$ZV|W(k+IGo@^WNDlUvJzyd`^5qXk5QnK8aTKy8jjtdgBRvUz{G1
+zH(P7q(A@~V(I%gbh>;ZkIB<U2ee(UZB-t*E#v5?Id^GKmemt`d`G~x+4#-Ey<J`f(
+zK|6OSaJ3D1SRC`w6K8D_r2&c2fb>m7lh7=l`4RbK?u&N`!|^!R9XM#`dIDFQM6WpJ
+YqbE*fJqcn;qB+ijB(`j!r=>Id4}3YXR{#J2
+
+diff --git a/crates/zakuro-gpu/src/backend/vulkan.rs b/crates/zakuro-gpu/src/backend/vulkan.rs
+index 8476461..4c70c13 100644
+--- a/crates/zakuro-gpu/src/backend/vulkan.rs
++++ b/crates/zakuro-gpu/src/backend/vulkan.rs
+@@ -143,9 +143,11 @@ pub struct VulkanPresenter {
+     /// Whether the most recent title frame contains Mario's lower-screen pause
+     /// UI; this is drawn only while paused, never as a permanent second screen.
+     mario_pause_overlay: bool,
+-    /// User-requested access to Mario's real lower touchscreen while outside a
+-    /// course. This is a temporary interactive inset, toggled by R3 on iOS.
++    /// Mario's real lower touchscreen while outside a course. The iOS host
++    /// surfaces this automatically for front-end screens.
+     mario_touch_overlay: bool,
++    /// Normalised host cursor inside Mario's lower touchscreen inset.
++    mario_touch_cursor: (f32, f32),
+     /// set when the swapchain no longer matches the window
+     stale: bool,
+ }
+@@ -434,7 +436,11 @@ impl VulkanPresenter {
+             stereo: Stereo::default(),
+             mario_course_hud: false,
+             mario_pause_overlay: false,
+-            mario_touch_overlay: false,
++            // Mario's front-end genuinely uses the lower LCD for file/profile
++            // selection and world controls, so surface it by default whenever a
++            // course/pause screen is not taking ownership of the lower LCD.
++            mario_touch_overlay: true,
++            mario_touch_cursor: (0.5, 0.5),
+             stale: false,
+         };
+ 
+@@ -916,11 +922,11 @@ impl VulkanPresenter {
+                     let pillar_width = (self.extent.width as f32 - pillar_left).max(0.0);
+                     let margin = (h * 0.012).max(pillar_width * 0.08);
+                     let medal_gap = h * 0.006;
+-                    let medal_d = h * 0.043;
++                    let medal_d = h * 0.052;
+                     let medal_row_w = medal_d * 3.0 + medal_gap * 2.0;
+-                    let reserve_d = h * 0.095;
+-                    let top = game.y + h * 0.045;
+-                    let gap = h * 0.016;
++                    let reserve_d = h * 0.112;
++                    let top = game.y + h * 0.035;
++                    let gap = h * 0.012;
+                     let widest = medal_row_w.max(reserve_d);
+                     let hud_center_x = if pillar_width >= widest + 2.0 * margin {
+                         pillar_left + pillar_width / 2.0
+@@ -932,14 +938,14 @@ impl VulkanPresenter {
+ 
+                     // Draw each medal separately. The native status strip's
+                     // coloured rectangle never enters the final composite.
+-                    for (index, source_x) in [101.5f32, 137.5, 173.5].into_iter().enumerate() {
++                    for (index, source_x) in [105.0f32, 141.0, 177.0].into_iter().enumerate() {
+                         let x = hud_center_x - medal_row_w / 2.0
+                             + index as f32 * (medal_d + medal_gap);
+                         draw_hud(
+                             device,
+                             command_buffer,
+                             Viewport { x, y: top, width: medal_d, height: medal_d },
+-                            subcrop(source_x, 0.0, 43.0, 43.0),
++                            subcrop(source_x, 3.5, 36.0, 36.0),
+                             3,
+                         );
+                     }
+@@ -998,6 +1004,53 @@ impl VulkanPresenter {
+                         &constants,
+                     );
+                     device.cmd_draw(command_buffer, 3, 1, 0, 0);
++
++                    // A controller-driven lower-screen cursor. The right stick
++                    // moves it in iOS and R3 taps it; render it here so the
++                    // pointer and the touchscreen inset always share geometry.
++                    let cursor_d = (viewport.height * 0.055).clamp(18.0, 32.0);
++                    let cursor_x = viewport.x + self.mario_touch_cursor.0 * viewport.width;
++                    let cursor_y = viewport.y + self.mario_touch_cursor.1 * viewport.height;
++                    let cursor_viewport = Viewport {
++                        x: (cursor_x - cursor_d * 0.5)
++                            .clamp(viewport.x, viewport.x + viewport.width - cursor_d),
++                        y: (cursor_y - cursor_d * 0.5)
++                            .clamp(viewport.y, viewport.y + viewport.height - cursor_d),
++                        width: cursor_d,
++                        height: cursor_d,
++                    };
++                    let mut cursor_constants: Vec<u8> =
++                        area.iter().flat_map(|c| c.to_le_bytes()).collect();
++                    cursor_constants.extend_from_slice(&5i32.to_le_bytes());
++                    set_viewport(device, command_buffer, cursor_viewport, self.extent);
++                    device.cmd_bind_pipeline(
++                        command_buffer,
++                        vk::PipelineBindPoint::GRAPHICS,
++                        self.hud_pipeline,
++                    );
++                    device.cmd_bind_descriptor_sets(
++                        command_buffer,
++                        vk::PipelineBindPoint::GRAPHICS,
++                        self.hud_pipeline_layout,
++                        0,
++                        &[descriptor],
++                        &[],
++                    );
++                    device.cmd_push_constants(
++                        command_buffer,
++                        self.hud_pipeline_layout,
++                        vk::ShaderStageFlags::VERTEX,
++                        VERT_CONSTANTS_OFFSET,
++                        &0i32.to_le_bytes(),
++                    );
++                    device.cmd_push_constants(
++                        command_buffer,
++                        self.hud_pipeline_layout,
++                        vk::ShaderStageFlags::FRAGMENT,
++                        FRAG_CONSTANTS_OFFSET,
++                        &cursor_constants,
++                    );
++                    device.cmd_draw(command_buffer, 3, 1, 0, 0);
+                 }
+             }
+ 
+@@ -1249,16 +1302,28 @@ impl Presenter for VulkanPresenter {
+ 
+ impl VulkanPresenter {
+     pub fn set_mario_course_hud(&mut self, enabled: bool) {
++        let was_enabled = self.mario_course_hud;
+         self.mario_course_hud = enabled;
+         if enabled {
+             self.mario_touch_overlay = false;
++        } else if was_enabled && !self.mario_pause_overlay {
++            self.mario_touch_overlay = true;
+         }
+     }
+ 
+     pub fn set_mario_pause_overlay(&mut self, enabled: bool) {
++        let was_enabled = self.mario_pause_overlay;
+         self.mario_pause_overlay = enabled;
+         if enabled {
+             self.mario_touch_overlay = false;
++        } else if was_enabled && !self.mario_course_hud {
++            self.mario_touch_overlay = true;
++        }
++    }
++
++    pub fn set_mario_touch_cursor(&mut self, x: f32, y: f32) {
++        if x.is_finite() && y.is_finite() {
++            self.mario_touch_cursor = (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
+         }
+     }
+ 
+@@ -1321,8 +1386,8 @@ impl VulkanPresenter {
+         let u = (px - viewport.x) / viewport.width;
+         let v = (py - viewport.y) / viewport.height;
+         Some((
+-            (u * 320.0).round().clamp(0.0, 320.0) as u16,
+-            (v * 240.0).round().clamp(0.0, 240.0) as u16,
++            (u * 319.0).round().clamp(0.0, 319.0) as u16,
++            (v * 239.0).round().clamp(0.0, 239.0) as u16,
+         ))
+     }
+ }

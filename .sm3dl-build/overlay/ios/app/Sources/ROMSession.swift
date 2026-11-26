@@ -354,10 +354,12 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
     private let inputState = InputState()
     /// Hardware controller bridge; created by `startControllerSupport()`.
     private var controllerManager: GameControllerManager?
-    /// Host-only Mario R3 lower-screen inset state. runtimeQueue only.
+    /// Host-only Mario lower-screen controller state. runtimeQueue only.
     private var marioRuntimeActive = false
     private var marioR3WasDown = false
     private var marioUpWasDown = false
+    private var marioTouchCursorX: Float = 0.5
+    private var marioTouchCursorY: Float = 0.5
 
     /// Audio path: ring buffer + AVAudioEngine, started after a successful load.
     private let audioOutput = AudioOutput()
@@ -1828,6 +1830,8 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         marioRuntimeActive = false
         marioR3WasDown = false
         marioUpWasDown = false
+        marioTouchCursorX = 0.5
+        marioTouchCursorY = 0.5
         if let presenter = framePresenter {
             // The presenter's device and the screens it showed belong to this
             // runtime: stop presenting before the system goes away.
@@ -1935,6 +1939,8 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         marioRuntimeActive = launch.entry.titleID == Self.mario3DLandUSA
         marioR3WasDown = false
         marioUpWasDown = false
+        marioTouchCursorX = 0.5
+        marioTouchCursorY = 0.5
         system = handle
         framePresenter = usedPresenter
         if presenter != nil, usedPresenter == nil {
@@ -2394,28 +2400,55 @@ final class ROMSession: ObservableObject, SaveStateRuntime {
         var input = warmUpRun == nil ? inputState.snapshot() : InputSnapshot()
         if marioRuntimeActive {
             let r3Down = input.hostR3
-            if let presenter = framePresenter, r3Down && !marioR3WasDown {
-                _ = zk_presenter_toggle_mario_touch_overlay(presenter)
-            }
-            marioR3WasDown = r3Down
-
-            // D-pad Up is the reserve-item shortcut only while the course HUD is
-            // active. Synthesize one tap on the native reserve slot, consume Up
-            // for that course frame, and leave map/pause navigation untouched.
             let upDown = input.buttons & ZKButton.up != 0
-            if zk_mario_reserve_input_active(system) != 0 {
+            let courseActive = zk_mario_reserve_input_active(system) != 0
+            let frontendTouchActive = zk_mario_frontend_touch_active(system) != 0
+
+            if courseActive {
+                // D-pad Up is the reserve-item shortcut only while the course HUD
+                // is active. Synthesize one tap on Nintendo's native reserve slot,
+                // consume Up for that course frame, and leave every other button
+                // and the C-stick alone.
                 input.buttons &= ~ZKButton.up
                 if upDown && !marioUpWasDown && !input.touch {
                     input.touch = true
                     input.touchX = 160
                     input.touchY = 131
                 }
-            }
-            marioUpWasDown = upDown
+            } else if frontendTouchActive {
+                // Mario's front-end uses the second LCD for world tabs, profile
+                // selection and other touch-only controls. Outside courses, turn
+                // the otherwise-unused host right stick into a small lower-screen
+                // cursor and R3 into one native touchscreen tap. Left stick,
+                // D-pad and face buttons still go straight to the game.
+                let deadzone: Float = 0.18
+                let speed: Float = 0.018
+                let cursorDelta: (Float) -> Float = { value in
+                    let magnitude = abs(value)
+                    guard magnitude > deadzone else { return 0 }
+                    let scaled = (magnitude - deadzone) / (1 - deadzone)
+                    return (value < 0 ? -1 : 1) * scaled * speed
+                }
+                marioTouchCursorX = min(max(
+                    marioTouchCursorX + cursorDelta(input.cStickX), 0), 1)
+                marioTouchCursorY = min(max(
+                    marioTouchCursorY - cursorDelta(input.cStickY), 0), 1)
+                input.cStickX = 0
+                input.cStickY = 0
 
-            // R3 only reveals the original lower screen. The game still receives
-            // its native Circle Pad, C-stick, D-pad and face-button inputs; a
-            // real finger tap on the inset is mapped to touchscreen input.
+                if let presenter = framePresenter {
+                    _ = zk_presenter_set_mario_touch_cursor(
+                        presenter, marioTouchCursorX, marioTouchCursorY)
+                }
+                if r3Down && !marioR3WasDown && !input.touch {
+                    input.touch = true
+                    input.touchX = UInt16((marioTouchCursorX * 319).rounded())
+                    input.touchY = UInt16((marioTouchCursorY * 239).rounded())
+                }
+            }
+
+            marioR3WasDown = r3Down
+            marioUpWasDown = courseActive ? upDown : false
         } else {
             marioR3WasDown = input.hostR3
             marioUpWasDown = false

@@ -25,10 +25,10 @@ index cd46236..4077566 100644
              )
          } else {
              let (width_f, height_f) = (width as f32, height as f32);
-+            // The lower LCD shares Mario's widened render target. Keep its
-+            // 320-pixel window, but move it toward the missing left-side content
-+            // instead of exposing more of the host-only blue/right margin.
-+            let first = first.saturating_sub(self.wide_margin);
++            // The lower LCD shares Mario's widened render target. The first
++            // on-device recovery still left a 24-pixel blue strip at 2x inset
++            // scale, i.e. 12 native pixels, so carry that measured bias left too.
++            let first = first.saturating_sub(self.wide_margin.saturating_add(12));
              let (left, right) = ((first * scale) as f32, ((first + count) * scale) as f32);
              let (top, bottom) = (((row_pixels - screen.columns) * scale) as f32, (row_pixels * scale) as f32);
              (

@@ -1552,24 +1552,14 @@ pub extern "C" fn zk_set_input(
     // `System` behind `system`.
     let system = unsafe { &mut *(system as *mut System) };
     let (c_stick_x, c_stick_y) = C_STICK.with(Cell::get);
-    let mut pad = PadState::from_bits_truncate(buttons);
-    let reserve_shortcut =
-        touch == 0 && pad.contains(PadState::UP) && system.mario_course_hud_active();
-    if reserve_shortcut {
-        // In a course the lower LCD's centre slot is the reserve item. Consume
-        // D-pad Up as that touch only while the course-HUD detector is active;
-        // outside courses Up stays an ordinary 3DS D-pad input.
-        pad.remove(PadState::UP);
-    }
+    let pad = PadState::from_bits_truncate(buttons);
     system.set_input(InputState {
         buttons: pad,
         circle_x,
         circle_y,
         c_stick_x,
         c_stick_y,
-        touch: if reserve_shortcut {
-            Some((160, 131))
-        } else if touch != 0 {
+        touch: if touch != 0 {
             Some((touch_x, touch_y))
         } else {
             None

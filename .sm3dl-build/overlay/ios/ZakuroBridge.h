@@ -552,8 +552,14 @@ int32_t zk_present_layout_size(uint32_t layout, uint32_t orientation,
 /** Whether D-pad Up should activate Mario's reserve item in course gameplay. */
 int32_t zk_mario_reserve_input_active(zk_system_t system);
 
+/** Whether Mario's front-end lower touchscreen should accept the host cursor. */
+int32_t zk_mario_frontend_touch_active(zk_system_t system);
+
 /** Toggle Mario's temporary lower-screen inset. */
 int32_t zk_presenter_toggle_mario_touch_overlay(zk_presenter_t presenter);
+
+/** Set the normalised (0...1) host cursor inside Mario's lower-screen inset. */
+int32_t zk_presenter_set_mario_touch_cursor(zk_presenter_t presenter, float x, float y);
 
 /**
  * Map a point in the whole Mario Metal surface to the temporary lower-screen

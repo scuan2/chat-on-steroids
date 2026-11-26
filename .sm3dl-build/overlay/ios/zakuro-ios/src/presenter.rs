@@ -603,6 +603,16 @@ pub extern "C" fn zk_mario_reserve_input_active(system: *mut c_void) -> i32 {
     (system.mario_course_hud_active() && !system.mario_pause_active()) as i32
 }
 
+/// Whether Mario is in a front-end state where the real lower touchscreen can
+/// be driven by the host controller cursor.
+#[no_mangle]
+pub extern "C" fn zk_mario_frontend_touch_active(system: *mut c_void) -> i32 {
+    let Some(system) = (unsafe { (system as *mut System).as_ref() }) else {
+        return 0;
+    };
+    (!system.mario_course_hud_active() && !system.mario_pause_active()) as i32
+}
+
 /// Toggles Super Mario 3D Land's temporary lower-touchscreen compatibility
 /// inset. The presenter rejects it during active course gameplay or its
 /// dedicated pause overlay. Returns 1 while visible, 0 while hidden/rejected,
@@ -613,6 +623,20 @@ pub extern "C" fn zk_presenter_toggle_mario_touch_overlay(presenter: *mut c_void
         return -1;
     };
     presenter.presenter.toggle_mario_touch_overlay() as i32
+}
+
+/// Moves Mario's host controller cursor inside the lower touchscreen inset.
+#[no_mangle]
+pub extern "C" fn zk_presenter_set_mario_touch_cursor(
+    presenter: *mut c_void,
+    x: f32,
+    y: f32,
+) -> i32 {
+    let Some(presenter) = (unsafe { (presenter as *mut PresenterHandle).as_mut() }) else {
+        return -1;
+    };
+    presenter.presenter.set_mario_touch_cursor(x, y);
+    1
 }
 
 /// Maps a touch on Mario's temporary lower-screen inset to native 3DS
