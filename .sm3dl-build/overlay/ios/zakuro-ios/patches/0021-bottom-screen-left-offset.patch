@@ -1,15 +1,17 @@
 diff --git a/crates/zakuro-gpu/src/raster/hardware.rs b/crates/zakuro-gpu/src/raster/hardware.rs
 --- a/crates/zakuro-gpu/src/raster/hardware.rs
 +++ b/crates/zakuro-gpu/src/raster/hardware.rs
-@@ -5134,7 +5134,10 @@
+@@ -5134,7 +5134,11 @@
              )
          } else {
              let (width_f, height_f) = (width as f32, height as f32);
 -            let (left, right) = ((first * scale) as f32, ((first + count) * scale) as f32);
-+            // The lower LCD is shifted by the renderer-wide margin in the shared framebuffer.
-+            // Non-tiled screen surfaces do not retain that value in Surface.margin.
-+            let margin = self.wide_margin;
-+            let (left, right) = (((first + margin) * scale) as f32, ((first + count + margin) * scale) as f32);
++            // The lower LCD shares Mario's widened render target. Shift its
++            // fixed-width source window toward the missing left-side content;
++            // the previous +margin correction moved in exactly the wrong direction
++            // and exposed more of the unwanted blue strip on the right.
++            let first = first.saturating_sub(self.wide_margin);
++            let (left, right) = ((first * scale) as f32, ((first + count) * scale) as f32);
              let (top, bottom) = (((row_pixels - screen.columns) * scale) as f32, (row_pixels * scale) as f32);
              (
                  [left / width_f, top / height_f, (right - left) / width_f, (bottom - top) / height_f],

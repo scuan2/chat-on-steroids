@@ -1,4 +1,4 @@
-﻿//! Presentation of the 3DS screens on the host's Metal layer (A1).
+//! Presentation of the 3DS screens on the host's Metal layer (A1).
 //!
 //! The app owns a `UIView` whose backing layer is a `CAMetalLayer` and hands
 //! its pointer to [`zk_presenter_create`]. Zakuro's Vulkan presenter wraps that
@@ -61,8 +61,8 @@ use zakuro_core::System;
 use zakuro_gpu::backend::vulkan::VulkanPresenter;
 use zakuro_gpu::backend::TOP_WIDTH;
 use zakuro_gpu::{
-    layout, CustomViewports, Overlay, OverlayMesh, OverlayTexture, OverlayVertex, PresentError,
-    Presenter, ScreenImage, ScreenLayout, ScreenOrientation,
+    layout, CustomViewports, Overlay, PresentError, Presenter, ScreenImage, ScreenLayout,
+    ScreenOrientation,
 };
 
 use crate::{perf, set_last_error};
@@ -196,33 +196,6 @@ pub struct PresenterHandle {
     size: (u32, u32),
     /// Whether the first presented frame already logged which path it took.
     logged_mode: bool,
-    /// Last native Mario HUD images uploaded through the host overlay.
-    mario_medal_generation: u64,
-    mario_medal_size: [u32; 2],
-    mario_reserve_generation: u64,
-    mario_reserve_size: [u32; 2],
-    /// Whether the temporary lower-screen inset frame texture is uploaded.
-    mario_touch_overlay_frame_ready: bool,
-}
-
-const MARIO_MEDAL_TEXTURE: u64 = 0x534d_3344_4d45_444c; // "SM3DMEDL"
-const MARIO_RESERVE_TEXTURE: u64 = 0x534d_3344_5253_5256; // "SM3DRSRV"
-const MARIO_FRAME_TEXTURE: u64 = 0x534d_3344_4652_414d; // "SM3DFRAM"
-
-fn overlay_quad(texture: u64, rect: [f32; 4], clip: [u32; 4]) -> OverlayMesh {
-    let [x, y, width, height] = rect;
-    let white = [255, 255, 255, 255];
-    OverlayMesh {
-        texture,
-        clip,
-        vertices: vec![
-            OverlayVertex { position: [x, y], uv: [0.0, 0.0], color: white },
-            OverlayVertex { position: [x + width, y], uv: [1.0, 0.0], color: white },
-            OverlayVertex { position: [x + width, y + height], uv: [1.0, 1.0], color: white },
-            OverlayVertex { position: [x, y + height], uv: [0.0, 1.0], color: white },
-        ],
-        indices: vec![0, 1, 2, 0, 2, 3],
-    }
 }
 
 /// What presenting a frame of `system` through a presenter will do: the
@@ -361,11 +334,6 @@ pub extern "C" fn zk_presenter_create(
                 presenter,
                 size: (width, height),
                 logged_mode: false,
-                mario_medal_generation: 0,
-                mario_medal_size: [0, 0],
-                mario_reserve_generation: 0,
-                mario_reserve_size: [0, 0],
-                mario_touch_overlay_frame_ready: false,
             })) as *mut c_void
         }
         Err(error) => {
@@ -625,8 +593,8 @@ pub extern "C" fn zk_present_layout_size(
     1
 }
 
-/// Whether Mario is in active course gameplay, where D-pad Up is the reserve
-/// item action. The native pause menu and world map keep their normal controls.
+/// Whether Super Mario 3D Land is in active course gameplay where the host
+/// reserves D-pad Up for the native reserve-item touchscreen action.
 #[no_mangle]
 pub extern "C" fn zk_mario_reserve_input_active(system: *mut c_void) -> i32 {
     let Some(system) = (unsafe { (system as *mut System).as_ref() }) else {
@@ -635,8 +603,10 @@ pub extern "C" fn zk_mario_reserve_input_active(system: *mut c_void) -> i32 {
     (system.mario_course_hud_active() && !system.mario_pause_active()) as i32
 }
 
-/// Toggles Mario's temporary lower-screen inset. Active course gameplay and
-/// the native pause UI deliberately hide it.
+/// Toggles Super Mario 3D Land's temporary lower-touchscreen compatibility
+/// inset. The presenter rejects it during active course gameplay or its
+/// dedicated pause overlay. Returns 1 while visible, 0 while hidden/rejected,
+/// and -1 for a NULL presenter.
 #[no_mangle]
 pub extern "C" fn zk_presenter_toggle_mario_touch_overlay(presenter: *mut c_void) -> i32 {
     let Some(presenter) = (unsafe { (presenter as *mut PresenterHandle).as_mut() }) else {
@@ -645,8 +615,9 @@ pub extern "C" fn zk_presenter_toggle_mario_touch_overlay(presenter: *mut c_void
     presenter.presenter.toggle_mario_touch_overlay() as i32
 }
 
-/// Maps a point in the whole Mario Metal surface to the temporary lower-screen
-/// inset. Returns 1 only while the inset is visible and the point is inside it.
+/// Maps a touch on Mario's temporary lower-screen inset to native 3DS
+/// touchscreen coordinates. Drawing and mapping use the same presenter-owned
+/// geometry, so they cannot drift apart.
 #[no_mangle]
 pub extern "C" fn zk_present_mario_touch_map(
     presenter: *mut c_void,
@@ -789,181 +760,22 @@ pub extern "C" fn zk_present(system: *mut c_void, presenter: *mut c_void) -> i32
         pixels: &[],
         gpu: None,
     };
-    let mut overlay = Overlay::default();
+    let overlay = Overlay::default();
 
     // A host-widened top screen is still a 240-line logical 3DS display, but
     // its GPU image can be wider than the console's native 400 pixels. Feed
     // that real aspect to the presenter so TopOnly stays aspect-correct.
     let top_image = top.image();
-    let logical_width = if top_image.width > 0 && top_image.height > 0 {
-        240.0 * top_image.width as f32 / top_image.height as f32
-    } else {
-        TOP_WIDTH
-    };
-    presenter.presenter.set_top_width(logical_width);
-    let mario_course = system.mario_course_hud_active();
+    if top_image.width > 0 && top_image.height > 0 {
+        let logical_width = 240.0 * top_image.width as f32 / top_image.height as f32;
+        presenter.presenter.set_top_width(logical_width);
+    }
     presenter
         .presenter
-        .set_mario_course_hud(mario_course);
+        .set_mario_course_hud(system.mario_course_hud_active());
     presenter
         .presenter
         .set_mario_pause_overlay(system.mario_pause_active());
-
-    // The reserve model and all three Star Medals are replayed from their
-    // original lower-screen draws into transparent RGBA. No button ring, green
-    // backing or lower-screen crop is carried into the black sidebar.
-    if mario_course {
-        let reserve = system.mario_reserve_image();
-        let medals = system.mario_medal_image();
-
-        if let Some((pixels, [width, height], generation)) = reserve {
-            if width > 0 && height > 0 && generation != presenter.mario_reserve_generation {
-                let same_size = presenter.mario_reserve_size == [width, height]
-                    && presenter.mario_reserve_generation != 0;
-                overlay.textures.push(OverlayTexture {
-                    id: MARIO_RESERVE_TEXTURE,
-                    offset: same_size.then_some([0, 0]),
-                    size: [width, height],
-                    pixels: pixels.to_vec(),
-                    linear: true,
-                });
-                presenter.mario_reserve_generation = generation;
-                presenter.mario_reserve_size = [width, height];
-            }
-        }
-
-        if let Some((pixels, [width, height], generation)) = medals {
-            if width > 0 && height > 0 && generation != presenter.mario_medal_generation {
-                let same_size = presenter.mario_medal_size == [width, height]
-                    && presenter.mario_medal_generation != 0;
-                overlay.textures.push(OverlayTexture {
-                    id: MARIO_MEDAL_TEXTURE,
-                    offset: same_size.then_some([0, 0]),
-                    size: [width, height],
-                    pixels: pixels.to_vec(),
-                    linear: true,
-                });
-                presenter.mario_medal_generation = generation;
-                presenter.mario_medal_size = [width, height];
-            }
-        }
-
-        if let Some(game) = layout(
-            presenter.size.0,
-            presenter.size.1,
-            ScreenLayout::TopOnly,
-            ScreenOrientation::North,
-            logical_width,
-            false,
-        )
-        .0
-        {
-            let pillar_left = game.x + game.width;
-            let pillar_width = (presenter.size.0 as f32 - pillar_left).max(0.0);
-            // Keep the native artwork comfortably legible at the iPhone's
-            // drawable resolution. The reserve model is naturally wide, so
-            // constrain its width and height independently rather than
-            // forcing it into a square slot; the three medals form a taller,
-            // narrower column beneath it.
-            let reserve_width_limit = (game.height * 0.110).min(pillar_width * 0.72);
-            let reserve_height_limit = game.height * 0.110;
-            let medal_width_limit = (game.height * 0.063).min(pillar_width * 0.52);
-            let medal_height_limit = game.height * 0.200;
-            let reserve_size = reserve
-                .filter(|(_, [w, h], _)| *w > 0 && *h > 0)
-                .map(|(_, [w, h], _)| (w as f32, h as f32));
-            let medal_size = medals
-                .filter(|(_, [w, h], _)| *w > 0 && *h > 0)
-                .map(|(_, [w, h], _)| (w as f32, h as f32));
-
-            let reserve_scale = reserve_size.map_or(0.0, |(w, h)| {
-                (reserve_width_limit / w).min(reserve_height_limit / h)
-            });
-            let reserve_draw = reserve_size.map_or((0.0, 0.0), |(w, h)| {
-                (w * reserve_scale, h * reserve_scale)
-            });
-            let medal_scale = medal_size.map_or(0.0, |(w, h)| {
-                (medal_width_limit / w).min(medal_height_limit / h)
-            });
-            let medal_draw = medal_size.map_or((0.0, 0.0), |(w, h)| {
-                (w * medal_scale, h * medal_scale)
-            });
-            let has_reserve = reserve_draw.0 >= 8.0 && reserve_draw.1 >= 8.0;
-            let has_medals = medal_draw.0 >= 8.0 && medal_draw.1 >= 8.0;
-            let gap = if has_reserve && has_medals { game.height * 0.020 } else { 0.0 };
-            // This is a compact top-right HUD, not a second screen or a
-            // floating centre-screen widget. Both native elements share one
-            // centre line and start at the same top inset.
-            let top = game.y + game.height * 0.040;
-            let widest = reserve_draw.0.max(medal_draw.0);
-            let hud_center_x = pillar_left + pillar_width / 2.0;
-            let clip = [0, 0, presenter.size.0, presenter.size.1];
-
-            // Reserve power-up first, then the three original medals vertically.
-            if has_reserve {
-                overlay.meshes.push(overlay_quad(
-                    MARIO_RESERVE_TEXTURE,
-                    [
-                        hud_center_x - reserve_draw.0 / 2.0,
-                        top,
-                        reserve_draw.0,
-                        reserve_draw.1,
-                    ],
-                    clip,
-                ));
-            }
-            if has_medals {
-                overlay.meshes.push(overlay_quad(
-                    MARIO_MEDAL_TEXTURE,
-                    [
-                        hud_center_x - medal_draw.0 / 2.0,
-                        top + if has_reserve { reserve_draw.1 + gap } else { 0.0 },
-                        medal_draw.0,
-                        medal_draw.1,
-                    ],
-                    clip,
-                ));
-            }
-        }
-    }
-
-    if let Some(viewport) = presenter.presenter.mario_touch_viewport() {
-        if !presenter.mario_touch_overlay_frame_ready {
-            overlay.textures.push(OverlayTexture {
-                id: MARIO_FRAME_TEXTURE,
-                offset: None,
-                size: [1, 1],
-                pixels: vec![0, 0, 0, 220],
-                linear: false,
-            });
-            presenter.mario_touch_overlay_frame_ready = true;
-        }
-
-        let clip = [0, 0, presenter.size.0, presenter.size.1];
-        let border = (viewport.height * 0.005).clamp(3.0, 6.0);
-        overlay.meshes.extend([
-            overlay_quad(
-                MARIO_FRAME_TEXTURE,
-                [viewport.x - border, viewport.y - border, viewport.width + border * 2.0, border],
-                clip,
-            ),
-            overlay_quad(
-                MARIO_FRAME_TEXTURE,
-                [viewport.x - border, viewport.y + viewport.height, viewport.width + border * 2.0, border],
-                clip,
-            ),
-            overlay_quad(
-                MARIO_FRAME_TEXTURE,
-                [viewport.x - border, viewport.y, border, viewport.height],
-                clip,
-            ),
-            overlay_quad(
-                MARIO_FRAME_TEXTURE,
-                [viewport.x + viewport.width, viewport.y, border, viewport.height],
-                clip,
-            ),
-        ]);
-    }
 
     if !presenter.logged_mode {
         presenter.logged_mode = true;
