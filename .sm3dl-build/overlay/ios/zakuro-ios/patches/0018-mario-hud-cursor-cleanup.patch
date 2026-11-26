@@ -1,22 +1,20 @@
 diff --git a/crates/zakuro-gpu/shaders/present.frag b/crates/zakuro-gpu/shaders/present.frag
-index e81d35f..84ba515 100644
+index e81d35f..40200cb 100644
 --- a/crates/zakuro-gpu/shaders/present.frag
 +++ b/crates/zakuro-gpu/shaders/present.frag
-@@ -81,24 +81,32 @@ void main() {
+@@ -81,24 +81,31 @@ void main() {
  #else
      vec3 rgb = shown(screen, crop.area, crop.bounds);
      if (crop.mode == 3) {
 -        // Mario 3D Land course medal: each medal is presented from its own
 -        // square source instead of the original rectangular status strip. A
 -        // soft circular cut keeps only the icon and never exposes strip edges.
--        float radius = length(uv * 2.0 - 1.0);
++        // Each 36x36 crop is one native collected/uncollected Star Medal cell.
++        // Keep Nintendo's green uncollected-state pixels; only fade the extreme
++        // square corners so the cell sits cleanly on the black phone pillar.
+         float radius = length(uv * 2.0 - 1.0);
 -        float alpha = 1.0 - smoothstep(0.88, 1.0, radius);
-+        // Keep Nintendo's actual medal pixels, but remove the lower-screen green
-+        // backing before the icon is composited into the black phone pillar.
-+        float green_backing = step(0.30, rgb.g)
-+            * step(rgb.r * 1.10, rgb.g)
-+            * step(rgb.b * 1.05, rgb.g);
-+        float alpha = 1.0 - green_backing;
++        float alpha = 1.0 - smoothstep(0.96, 1.0, radius);
          colour = vec4(rgb * alpha, alpha);
      } else if (crop.mode == 4) {
 -        // The reserve item is a live 3D model. The source crop is deliberately
@@ -46,51 +44,26 @@ index e81d35f..84ba515 100644
          colour = vec4(rgb, 1.0);
      }
 diff --git a/crates/zakuro-gpu/shaders/present.frag.spv b/crates/zakuro-gpu/shaders/present.frag.spv
-index 72c27b35e487976884b2423863f2b77da6f0f7a5..b85ce8758e0bbd13e2a952bc599eaa54dcb4a60c 100644
+index 72c27b35e487976884b2423863f2b77da6f0f7a5..8e9e9cc634bda3c4aa5c6efa7608310636e72edc 100644
 GIT binary patch
-delta 2966
-zcmZ9NNpKZa6o&h~kPzX;fk8nOh&Z4Of&wC#2^_*8Bp~8|;)5h4MJk~nlvP?~FDzVG
-zmL-)HY}v81*tmBK<&u>GiW8tHDi9pMuhZw*m99Ro|NlSdo_qS<bNhX=;$mx4U3tOe
-zBq=3Rlcr?P(WdRCu}`Zr%V|S$E=iJo2YY*mcJHa~-9Iq24_=>4O8($k9X!xq&G{J5
-zy~BgUhYybXZ!0Cq!D`RI;X~v6PWYk0;Ss_Z-;m7A`R<;9LnGCpy}fy!d(mroyP4?8
-z35lMD4<8=sWuB~%R(SvLpyM;X-uUr4;q^%;{O$gMkzQV4sAu$2`MuKEse!uB%jtPW
-z96xrfbrG{PfWO1eoc^dyz8HK3D`Vlm3hwLsplv?>o8UTZ3br=qE`gfy%{=Rwc~Z{J
-zKNZf^p65%GyAUqCGb5YOfNAivCzjRtboiC-)oqI@uY!LD+%d-Ki^ArBTc(_C34R~^
-z?1=-l7n=v~>+8$%Hk0RZczsg+KfxM=c}MowCT@ctKQ_C@H^8@jHn+w%!rz^-w8meA
-zpE<p`#<#$)FWfbHxuG|;QE07fm6r0fF@k>xw=sh2w=s&`hA49Tp~&rrBDWt3d|F~d
-z6ojO6^yuVsX&Ln<+xsO`cCZ>weF6IdTaLA`b?(X6n0kdA@^3JPCd;t%nEn`l5$yOS
-zSd9M`tbT+!9REFrmS)`+1AjoAIPs5Y>M`*pa7=6x{gL!C*usp7oIiohX%|N^KZDhe
-zB<XlHzd#hPVlnVn@Wf)Sp{YkPzk#C|bLfv^eg|8SF|8a3zaVN+#C7nwl%MzWCAk6K
-ziRo~F9i!#|+x`}2L6P83urVJqUjJX1G3pWXH`ti&e2#y>#(AmnWlNHOF-6}b0wro5
-z{4Vy~171Qif${oHZlNA{ePcv_1-75ca9462ybj#XvjelRW}cJK(9`53L8}lN5ET7d
-z+#qQqPp?}xAb2vi7&E!pMAPw40ng^?D#$BvHNP@lxz+@BWi?mZxZBYxCDvbOg`RXJ
-z?f`RVRU6>jc~I5G9#X$PPVSQ54UR35-vc+sN#wJ@#;C^}v%%ci9J5l8i9PK)V&Cou
-zt5uT5tgyLY?(9hVne)?TOvKLzTWG{LgSoSKKYPBpG0|%e<XUQAbnF7K6X~=lKRIgg
-zwhw~iZC$O0;KoD)J`6TSJqmjSY)tgkLa=dOXleF#kLIF!1U{B)#Rgo2W&-2&o7_Te
-zKz%l#ePfT<E75>U!0p6zU>4TQb1B*q_dgnN8G@q!3O3*qJiTl{eao?3n90Q^vXNGR
-ziw(FEu2yWoRq%-o_!Qbo_g`l;$7(Ql)*J@-c7EyAV@cP7)nc!o0dr@2y$0Y!#>8H?
-z<eG8j^PfV^eA)SLhZGZbz`3)8n|S&+XiOwr2X+$UOz2;YS`_#!IGcnC?33q=!(#mN
-zV8^4UwdQ*P(SbTmx}K+6B;5oq7P%SDofWwOun{vR;<ti}@m+B4EZ+a=E!bA~KdS0R
-zuqp%NL~H{)kv@y+<f#^uYzM1#@t&Udm%wUa5w`=)7mAbeGT7K1?tcXB1RE45;1#fe
-zUZK63Ys#U$mTSe6@;aL1jn{8(U%->1&y!+<r*^YlZ4th~8(`0PB!3gG<`vrRTvHD1
-ltz0V>QAKmS@%mleC_*1a%*m>-2&*Zc-^S9ZYn8c8{{bu59ee-)
+delta 1275
+zcmYk5yH8X>7{$MRVsy9ChDJmXQFIZ-Re@!9K~P@0EJhm>gJB~Z4J63M!r~T$)<>u`
+z@ejbxY-4S$v9%+##@c7&`CVpi?#-RdIcLtC`DX6iSHs`N@~LD`hgrgoSl;e@$nPcV
+z8B5!#gxSXOO0)IU3_c*f-r8(z*a5#FzPkRTAsUWf#@}3fbigw<BK~Z(x!HK|aCvQ|
+z{XKa%m3sN9wKJLB4F;6gEn~Ml8TIh2`g7u4+mFkh4~f5h(;4wm@%qQ(5g!wOeykAj
+zviO(J^AWFz|LnhCE^3ve^3!U1cK&7G&5Vi_MA)acZ=SQyIA@=6&OYOOr2V>MFCA31
+z#DrqHG+a?%RV%q|o{)zAUY?@#lfr0h|Cgn#S3S>P`5Eg`yQTJ9MT5yXs_{PIPW3O8
+z13xW}wr>_#&58XI?rD&=<+L->Ff*3ZNpsd`h4qF-Gd`|DI16+Z#B*L4EoX;9UJ%x6
+zLu!00*1)r6K_)Z|IuRp*9449%yeJ$Gyd<tS44k7E!9(E`Ff7a>_{ig9p!vL_Fl&?o
+zSMe1QOg`YMFahY>F7%o(6B#3vFN)?vOTzIY$Hn!AMREhVb$GnLDjdWoOi0ihPT)#b
+z)G+y?CWR>qpD*gVFbgq8QT#q=evv6*w3^N(r@7O@Xs!j3@rFcp#3jLaQy4S451SFj
+zv*=D_Ru~_T*XEpt?6rBP@h{c%7aUf<AZ<1gm@xqZ;q2gt8~meN%nj!@bE_$W!fp$H
+qRqw-V;%GcxTXY(-*XmA-7qP@`B!CGRI9^}Gl6bs`-u8ZOF#jLYGHI&-
 
-delta 1582
-zcmZ9M%TJS05XGloON*sd<RRh{#GS@yVho7^#D#7lEZmtiYNJV$5|E7x8)MwKFq-}e
-z>|B@_{siONxMGD+MeC#DTONvfe&r4}G~eW&Idi^y=g!R6#lib0v+<}eWfrp*%i7@w
-z*|Avdajr8OOW3@bP2?_Lo0>FhvV^^npDT=C&1uE2X}we|6sIOO{NG#jQOs<zP`oZ$
-z`lO}G&!et%M(oBe<#X|yvD(bj_>-tqL1cF3i1tkiRArCO=Z1RZe-Mt#(z4UR=WICi
-zy;@gfiQw~oT&GlSbPV}^3Hh_r$2a{Z`L)shp`$u2qjN1Of|n2y^cS<j1L@fT_qWTR
-zogN=_f2aI>K3}e;t_)Kkm9n1XF|8ED{ky^x#C_taEq<mv*F0bPp~#9wHm7w!mulC#
-zAnTUhQz7wR$`)i5*+}4C310|yJ8+Bg(Gtt(s+8unOb6Rp8Sz0Cl2*g(yi#5CRt{vw
-zn(O{MVO}~RtI9YC4F|F5`@o@NLrMY11yo=AD0>!s^h+`{T!{E58JZ<4ZM=l&vkcK_
-zIOK~kLVnJD6^0`@=e`9l(mJAwGdSO6ypNtZdy^=GL~K<Rf1!1yRe%-@>rhJcvwW+w
-zy|fIHJrsLN>#7Wnxm(sYzqImO(|w7p$qpzd8VUABt_wFd@{fGDip(4NS9nV!RTOQ8
-zn4otuCQeU1O#t^{=HS818*}YVXcqP+Q1or`(a=Qvv@jZYKchuBMpLK-0ybuF39vDZ
-z+93?*)6y!er#>xwKzuZ4T;C>4qONb3ucxl(gW~pRe7ZVHfkb#GOhczI2X)9uia!=O
-zzwItzzb#32$w%WOw_6wuyeHNzjK(Kvk1#sj|3A4mkXkl{`vTWEa{I-x0ea$WPNIw)
-zF-DHLVMdr0PyC=TiF*<~)E|<clfClcpq)DuxW**<#AyRVPn^<v62uylAeqhYKuPgE
-Otm}k+o4MGQ%>Dy)cCv&3
+delta 177
+zcmca%Gr@$HnMs+Qfq{{Mn}L@>Wh3u>rp*q_A<WF{+!H5HXInXW1N)lIYdCJO)Y~$!
+zFz_%iFvv49Fq{X{fefq+Y(QE8$Onmm08C5~Dh3jUi77$Fn1Esd4D1YCKw23n2GS2w
+g50VcDirFzRGrWPy{bXQb_zh(LU|`y8E~v;00D6)Z?EnA(
 
 diff --git a/crates/zakuro-gpu/src/backend/vulkan.rs b/crates/zakuro-gpu/src/backend/vulkan.rs
 index 8476461..9972b8d 100644
